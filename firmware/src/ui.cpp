@@ -224,14 +224,14 @@ static lv_obj_t* battery_img;
 static lv_obj_t* logo_img;
 static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
-// ---- Live-data freshness → which usage sub-view to show ----
-// usage panels when data is flowing, an idle "Zzz" screen when the host is
-// connected but no usage update landed within DATA_FRESH_MS, the pairing hint
-// when BLE is down. Re-evaluated every loop in ui_tick_anim().
+// ---- Usage-screen sub-view state ----
+// Show the pairing hint while BLE is down, the idle "Zzz" screen while we're
+// connected but still waiting for a first successful payload, and the usage
+// panels once we have any cached usage data. Re-evaluated every loop.
 static lv_obj_t* idle_group;            // the "Zzz" idle screen
 static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
 static bool      data_received = false; // any valid update since boot
-static bool      data_ok = true;        // last payload's ok flag; a {"ok":false} beat = "no fresh data"
+static bool      data_ok = true;        // last payload's ok flag; ok:false means "show cached data"
 static long      last_data_epoch = 0;   // daemon wall-clock epoch from the last valid usage update
 static bool      last_data_enterprise = false;
 static int       last_session_reset_mins = -1;
@@ -253,8 +253,8 @@ static uint8_t anim_spinner_idx = 0;
 static uint8_t anim_phase = 0;
 static uint8_t anim_msg_idx = 0;
 static uint32_t anim_msg_start = 0;
-static int idle_labels_last_refresh_min = -1;
-static int idle_labels_last_view = -1;
+static int reset_labels_last_refresh_min = -1;
+static int reset_labels_last_view = -1;
 #define ANIM_MSG_MS     4000
 
 static const char* const spinner_frames[] = {
@@ -319,18 +319,50 @@ static void format_reset_time(int mins, char* buf, size_t len) {
     } else {
         snprintf(buf, len, "Resets in %dd %dh", mins / 1440, (mins % 1440) / 60);
     }
+}
 
-    static void age_cached_resets(int elapsed_mins) {
-        if (elapsed_mins <= 0) return;
-        if (last_session_reset_mins >= 0) {
-            last_session_reset_mins = (last_session_reset_mins > elapsed_mins)
-                                    ? (last_session_reset_mins - elapsed_mins) : 0;
-        }
-        if (last_weekly_reset_mins >= 0) {
-            last_weekly_reset_mins = (last_weekly_reset_mins > elapsed_mins)
-                                   ? (last_weekly_reset_mins - elapsed_mins) : 0;
-        }
+static void age_cached_resets(int elapsed_mins) {
+    if (elapsed_mins <= 0) return;
+    if (last_session_reset_mins >= 0) {
+        last_session_reset_mins = (last_session_reset_mins > elapsed_mins)
+                                ? (last_session_reset_mins - elapsed_mins) : 0;
     }
+    if (last_weekly_reset_mins >= 0) {
+        last_weekly_reset_mins = (last_weekly_reset_mins > elapsed_mins)
+                               ? (last_weekly_reset_mins - elapsed_mins) : 0;
+    }
+}
+
+static int cached_elapsed_mins(void) {
+    if (clock_base_epoch > 0 && last_data_epoch > 0) {
+        const long now_epoch = clock_base_epoch + (long)((lv_tick_get() - clock_base_ms) / 1000);
+        const long elapsed_s = (now_epoch > last_data_epoch) ? (now_epoch - last_data_epoch) : 0;
+        return (int)(elapsed_s / 60);
+    }
+    return (int)((lv_tick_get() - last_data_ms) / 60000);
+}
+
+static bool usage_showing_cached_data(uint32_t now_ms) {
+    return data_received && (!data_ok || (now_ms - last_data_ms) >= DATA_FRESH_MS);
+}
+
+static void render_cached_usage_reset_labels(void) {
+    if (!data_received || last_data_enterprise) return;
+
+    const int elapsed_mins = cached_elapsed_mins();
+    char buf[48];
+
+    const int session_mins = (last_session_reset_mins < 0) ? -1
+                           : (last_session_reset_mins > elapsed_mins)
+                           ? (last_session_reset_mins - elapsed_mins) : 0;
+    format_reset_time(session_mins, buf, sizeof(buf));
+    lv_label_set_text(lbl_session_reset, buf);
+
+    const int weekly_mins = (last_weekly_reset_mins < 0) ? -1
+                          : (last_weekly_reset_mins > elapsed_mins)
+                          ? (last_weekly_reset_mins - elapsed_mins) : 0;
+    format_reset_time(weekly_mins, buf, sizeof(buf));
+    lv_label_set_text(lbl_weekly_reset, buf);
 }
 
 // Forward decls — callbacks defined near ui_show_screen below
@@ -469,9 +501,9 @@ static void build_pair_group(lv_obj_t* parent) {
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decides
 }
 
-// Idle "Zzz" screen — shown when the host is connected but no usage update has
-// landed recently (token expired, daemon down, host asleep…). Full-screen, like
-// the pairing hint, so we never render hours-old numbers as if they were live.
+// Idle "Zzz" screen — shown only while connected but still waiting for the first
+// successful usage payload, so the screen doesn't look broken before we have any
+// numbers to show.
 static void build_idle_group(lv_obj_t* parent) {
     idle_group = lv_obj_create(parent);
     lv_obj_set_size(idle_group, L.scr_w, L.scr_h - L.content_y);
@@ -691,7 +723,7 @@ void ui_update(const UsageData* data) {
         clock_base_epoch = data->clock_epoch;
         clock_base_ms = now_ms;
         clock_fmt = data->clock_fmt;
-    } else if (clock_base_epoch != 0) {   // clock turned off daemon-side → revert title to "Usage"
+    } else if (data->ok && clock_base_epoch != 0) {   // clock turned off daemon-side → revert title to "Usage"
         clock_base_epoch = 0;
         clock_last_min = -1;
         lv_label_set_text(lbl_title, "Usage");
@@ -788,18 +820,17 @@ void ui_update(const UsageData* data) {
 }
 
 // Pick the usage-view sub-screen: pairing hint (BLE down), the idle "Zzz" screen
-// (connected but data has gone stale), or the live usage panels. Only re-lays-out
-// on an actual change. The animated status line stays visible everywhere — it
-// reads "Listening…" on the idle screen, keeping it alive rather than frozen.
+// while waiting for a first payload, or the usage panels once we have any cached
+// usage data at all. Only re-lays-out on an actual change.
 static void update_view_state(void) {
     if (!usage_group || !pair_group || !idle_group) return;
     int v;
     if (!s_ble_connected) {
         v = 0;  // pairing hint
-    } else if (data_received && data_ok && (lv_tick_get() - last_data_ms) < DATA_FRESH_MS) {
-        v = 2;  // live usage
+    } else if (data_received) {
+        v = 2;  // live or cached usage
     } else {
-        v = 1;  // idle / Zzz
+        v = 1;  // idle / Zzz while waiting for a first payload
     }
     if (v == view_state) return;
     view_state = v;
@@ -814,15 +845,22 @@ void ui_tick_anim(void) {
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
     uint32_t now = lv_tick_get();
+    const int now_min = (int)(now / 60000);
     if (view_state == 1) {
-        const int now_min = (int)(now / 60000);
-        if (idle_labels_last_view != 1 || now_min != idle_labels_last_refresh_min) {
+        if (reset_labels_last_view != 1 || now_min != reset_labels_last_refresh_min) {
             update_idle_reset_labels();
-            idle_labels_last_refresh_min = now_min;
+            reset_labels_last_refresh_min = now_min;
         }
         splash_mini_tick();   // animate the sleeping creature on the idle screen
+    } else if (view_state == 2 && usage_showing_cached_data(now)) {
+        if (reset_labels_last_view != 2 || now_min != reset_labels_last_refresh_min) {
+            render_cached_usage_reset_labels();
+            reset_labels_last_refresh_min = now_min;
+        }
+    } else {
+        reset_labels_last_refresh_min = -1;
     }
-    idle_labels_last_view = view_state;
+    reset_labels_last_view = view_state;
 
     // Title clock: once the daemon has sent wall-clock time, replace "Usage" with
     // the live time, advanced locally so it ticks every minute between payloads.
@@ -860,10 +898,10 @@ void ui_tick_anim(void) {
     const char* text;
     if (!s_ble_connected) {
         text = "Waiting";              // advertising / waiting for a host connection
-    } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
-        text = (anim_msg_idx & 1) ? "No data" : "Listening";
     } else if (now - connected_at_ms < 5000) {
         text = "Connected";
+    } else if (view_state == 1 || usage_showing_cached_data(now)) {
+        text = "Listening";
     } else {
         text = anim_messages[anim_msg_idx];
     }
