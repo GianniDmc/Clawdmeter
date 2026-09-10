@@ -331,15 +331,15 @@ static void age_cached_resets(int elapsed_mins) {
 
 static int cached_elapsed_mins(void) {
     if (clock_base_epoch > 0 && last_data_epoch > 0) {
-        const long now_epoch = clock_base_epoch + (long)((lv_tick_get() - clock_base_ms) / 1000);
+        const long now_epoch = clock_base_epoch + (long)(lv_tick_elaps(clock_base_ms) / 1000);
         const long elapsed_s = (now_epoch > last_data_epoch) ? (now_epoch - last_data_epoch) : 0;
         return (int)(elapsed_s / 60);
     }
-    return (int)((lv_tick_get() - last_data_ms) / 60000);
+    return (int)(lv_tick_elaps(last_data_ms) / 60000);
 }
 
-static bool usage_showing_cached_data(uint32_t now_ms) {
-    return data_received && (!data_ok || (now_ms - last_data_ms) >= DATA_FRESH_MS);
+static bool usage_showing_cached_data(void) {
+    return data_received && (!data_ok || lv_tick_elaps(last_data_ms) >= DATA_FRESH_MS);
 }
 
 static void render_cached_usage_reset_labels(void) {
@@ -785,7 +785,7 @@ void ui_tick_anim(void) {
     const int now_min = (int)(now / 60000);
     if (view_state == 1) {
         splash_mini_tick();   // animate the sleeping creature on the idle screen
-    } else if (view_state == 2 && usage_showing_cached_data(now)) {
+    } else if (view_state == 2 && usage_showing_cached_data()) {
         if (now_min != cached_usage_last_refresh_min) {
             render_cached_usage_reset_labels();
             cached_usage_last_refresh_min = now_min;
@@ -797,7 +797,7 @@ void ui_tick_anim(void) {
     // Title clock: once the daemon has sent wall-clock time, replace "Usage" with
     // the live time, advanced locally so it ticks every minute between payloads.
     if (clock_base_epoch > 0) {
-        time_t cur = (time_t)(clock_base_epoch + (now - clock_base_ms) / 1000);
+        time_t cur = (time_t)(clock_base_epoch + lv_tick_elaps(clock_base_ms) / 1000);
         struct tm tmv;
         gmtime_r(&cur, &tmv);   // epoch is already local wall-clock → gmtime keeps it as-is
         if (tmv.tm_min != clock_last_min) {   // only rewrite the title when the minute changes
@@ -815,12 +815,12 @@ void ui_tick_anim(void) {
         }
     }
 
-    if (now - anim_msg_start >= ANIM_MSG_MS) {
+    if (lv_tick_elaps(anim_msg_start) >= ANIM_MSG_MS) {
         anim_msg_idx = (anim_msg_idx + 1) % ANIM_MSG_COUNT;
         anim_msg_start = now;
     }
 
-    if (now - anim_last_ms < spinner_ms[anim_spinner_idx]) return;
+    if (lv_tick_elaps(anim_last_ms) < spinner_ms[anim_spinner_idx]) return;
     anim_last_ms = now;
     anim_phase = (anim_phase + 1) % SPINNER_PHASES;
     anim_spinner_idx = (anim_phase < SPINNER_COUNT) ? anim_phase
@@ -830,9 +830,9 @@ void ui_tick_anim(void) {
     const char* text;
     if (!s_ble_connected) {
         text = "Waiting";              // advertising / waiting for a host connection
-    } else if (now - connected_at_ms < 5000) {
+    } else if (lv_tick_elaps(connected_at_ms) < 5000) {
         text = "Connected";
-    } else if (view_state == 1 || usage_showing_cached_data(now)) {
+    } else if (view_state == 1 || usage_showing_cached_data()) {
         text = "Listening";
     } else {
         text = anim_messages[anim_msg_idx];
