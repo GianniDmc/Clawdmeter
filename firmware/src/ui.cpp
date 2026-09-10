@@ -762,10 +762,10 @@ void ui_update(const UsageData* data) {
 static void update_view_state(void) {
     if (!usage_group || !pair_group || !idle_group) return;
     int v;
-    if (!s_ble_connected) {
-        v = 0;  // pairing hint
-    } else if (data_received) {
+    if (data_received) {
         v = 2;  // live or cached usage
+    } else if (!s_ble_connected) {
+        v = 0;  // pairing hint
     } else {
         v = 1;  // idle / Zzz while waiting for a first payload
     }
