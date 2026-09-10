@@ -216,8 +216,6 @@ static lv_obj_t* lbl_session_pct_sym = nullptr;  // "%" in smaller font
 static lv_obj_t* lbl_spending_desc = nullptr;     // "of your monthly budget"
 static lv_obj_t* lbl_spending_status = nullptr;   // "Under pace" / "On pace" / "Over pace"
 static lv_obj_t* lbl_anim;      // status line: connection state + whimsical idle
-static lv_obj_t* lbl_idle_session_reset = nullptr;
-static lv_obj_t* lbl_idle_weekly_reset = nullptr;
 
 // ---- Battery indicator (shared, on top) ----
 static lv_obj_t* battery_img;
@@ -236,8 +234,6 @@ static long      last_data_epoch = 0;   // daemon wall-clock epoch from the last
 static bool      last_data_enterprise = false;
 static int       last_session_reset_mins = -1;
 static int       last_weekly_reset_mins = -1;
-static int       idle_session_rendered_mins = -2;  // -2 = never rendered, -1 = hidden
-static int       idle_weekly_rendered_mins = -2;   // -2 = never rendered, -1 = hidden
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
 static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
@@ -253,8 +249,7 @@ static uint8_t anim_spinner_idx = 0;
 static uint8_t anim_phase = 0;
 static uint8_t anim_msg_idx = 0;
 static uint32_t anim_msg_start = 0;
-static int reset_labels_last_refresh_min = -1;
-static int reset_labels_last_view = -1;
+static int cached_usage_last_refresh_min = -1;
 #define ANIM_MSG_MS     4000
 
 static const char* const spinner_frames[] = {
@@ -520,77 +515,7 @@ static void build_idle_group(lv_obj_t* parent) {
     lv_obj_t* creature = splash_mini_create(idle_group, "cloud", L.idle_px);
     if (creature) lv_obj_align(creature, LV_ALIGN_CENTER, 0, -20);
 
-    lbl_idle_session_reset = lv_label_create(idle_group);
-    lv_label_set_text(lbl_idle_session_reset, "");
-    lv_obj_set_style_text_font(lbl_idle_session_reset, L.pace_font, 0);
-    lv_obj_set_style_text_color(lbl_idle_session_reset, COL_DIM, 0);
-    lv_obj_align(lbl_idle_session_reset, LV_ALIGN_BOTTOM_MID, 0, L.anim_y - 52);
-
-    lbl_idle_weekly_reset = lv_label_create(idle_group);
-    lv_label_set_text(lbl_idle_weekly_reset, "");
-    lv_obj_set_style_text_font(lbl_idle_weekly_reset, L.pace_font, 0);
-    lv_obj_set_style_text_color(lbl_idle_weekly_reset, COL_DIM, 0);
-    lv_obj_align(lbl_idle_weekly_reset, LV_ALIGN_BOTTOM_MID, 0, L.anim_y - 30);
-
     lv_obj_add_flag(idle_group, LV_OBJ_FLAG_HIDDEN);  // update_view_state decides
-}
-
-static void update_idle_reset_labels(void) {
-    if (!lbl_idle_session_reset || !lbl_idle_weekly_reset) return;
-    if (!data_received) {
-        if (idle_session_rendered_mins != -1) {
-            lv_label_set_text(lbl_idle_session_reset, "");
-            idle_session_rendered_mins = -1;
-        }
-        if (idle_weekly_rendered_mins != -1) {
-            lv_label_set_text(lbl_idle_weekly_reset, "");
-            idle_weekly_rendered_mins = -1;
-        }
-        return;
-    }
-
-    int elapsed_mins;
-    if (clock_base_epoch > 0 && last_data_epoch > 0) {
-        const long now_epoch = clock_base_epoch + (long)((lv_tick_get() - clock_base_ms) / 1000);
-        const long elapsed_s = (now_epoch > last_data_epoch) ? (now_epoch - last_data_epoch) : 0;
-        elapsed_mins = (int)(elapsed_s / 60);
-    } else {
-        elapsed_mins = (int)((lv_tick_get() - last_data_ms) / 60000);
-    }
-    char reset_buf[32];
-    char line_buf[48];
-    if (last_session_reset_mins < 0) {
-        if (idle_session_rendered_mins != -1) {
-            lv_label_set_text(lbl_idle_session_reset, "");
-            idle_session_rendered_mins = -1;
-        }
-    } else {
-        const int session_mins = (last_session_reset_mins > elapsed_mins)
-                               ? (last_session_reset_mins - elapsed_mins) : 0;
-        if (session_mins != idle_session_rendered_mins) {
-            format_reset_time(session_mins, reset_buf, sizeof(reset_buf));
-            snprintf(line_buf, sizeof(line_buf), "5h: %s", reset_buf);
-            lv_label_set_text(lbl_idle_session_reset, line_buf);
-            idle_session_rendered_mins = session_mins;
-        }
-    }
-
-    if (last_data_enterprise || last_weekly_reset_mins < 0) {
-        if (idle_weekly_rendered_mins != -1) {
-            lv_label_set_text(lbl_idle_weekly_reset, "");
-            idle_weekly_rendered_mins = -1;
-        }
-        return;
-    }
-
-    const int weekly_mins = (last_weekly_reset_mins > elapsed_mins)
-                          ? (last_weekly_reset_mins - elapsed_mins) : 0;
-    if (weekly_mins != idle_weekly_rendered_mins) {
-        format_reset_time(weekly_mins, reset_buf, sizeof(reset_buf));
-        snprintf(line_buf, sizeof(line_buf), "7d: %s", reset_buf);
-        lv_label_set_text(lbl_idle_weekly_reset, line_buf);
-        idle_weekly_rendered_mins = weekly_mins;
-    }
 }
 
 static void init_usage_screen(lv_obj_t* scr) {
@@ -725,6 +650,7 @@ void ui_update(const UsageData* data) {
         clock_fmt = data->clock_fmt;
     } else if (data->ok && clock_base_epoch != 0) {   // clock turned off daemon-side → revert title to "Usage"
         clock_base_epoch = 0;
+        last_data_epoch = 0;
         clock_last_min = -1;
         lv_label_set_text(lbl_title, "Usage");
     }
@@ -847,20 +773,15 @@ void ui_tick_anim(void) {
     uint32_t now = lv_tick_get();
     const int now_min = (int)(now / 60000);
     if (view_state == 1) {
-        if (reset_labels_last_view != 1 || now_min != reset_labels_last_refresh_min) {
-            update_idle_reset_labels();
-            reset_labels_last_refresh_min = now_min;
-        }
         splash_mini_tick();   // animate the sleeping creature on the idle screen
     } else if (view_state == 2 && usage_showing_cached_data(now)) {
-        if (reset_labels_last_view != 2 || now_min != reset_labels_last_refresh_min) {
+        if (now_min != cached_usage_last_refresh_min) {
             render_cached_usage_reset_labels();
-            reset_labels_last_refresh_min = now_min;
+            cached_usage_last_refresh_min = now_min;
         }
     } else {
-        reset_labels_last_refresh_min = -1;
+        cached_usage_last_refresh_min = -1;
     }
-    reset_labels_last_view = view_state;
 
     // Title clock: once the daemon has sent wall-clock time, replace "Usage" with
     // the live time, advanced locally so it ticks every minute between payloads.
