@@ -342,7 +342,14 @@ static bool usage_showing_cached_data(uint32_t now_ms) {
 }
 
 static void render_cached_usage_reset_labels(void) {
-    if (!data_received || last_data_enterprise) return;
+    if (!data_received) return;
+    if (last_data_enterprise) {
+        lv_label_set_text(lbl_session_reset, "");
+        lv_obj_add_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_clear_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
 
     const int elapsed_mins = cached_elapsed_mins();
     char buf[48];
