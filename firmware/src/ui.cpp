@@ -216,6 +216,8 @@ static lv_obj_t* lbl_session_pct_sym = nullptr;  // "%" in smaller font
 static lv_obj_t* lbl_spending_desc = nullptr;     // "of your monthly budget"
 static lv_obj_t* lbl_spending_status = nullptr;   // "Under pace" / "On pace" / "Over pace"
 static lv_obj_t* lbl_anim;      // status line: connection state + whimsical idle
+static lv_obj_t* lbl_idle_session_reset = nullptr;
+static lv_obj_t* lbl_idle_weekly_reset = nullptr;
 
 // ---- Battery indicator (shared, on top) ----
 static lv_obj_t* battery_img;
@@ -230,6 +232,9 @@ static lv_obj_t* idle_group;            // the "Zzz" idle screen
 static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
 static bool      data_received = false; // any valid update since boot
 static bool      data_ok = true;        // last payload's ok flag; a {"ok":false} beat = "no fresh data"
+static bool      last_data_enterprise = false;
+static int       last_session_reset_mins = -1;
+static int       last_weekly_reset_mins = -1;
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
 static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
@@ -466,7 +471,49 @@ static void build_idle_group(lv_obj_t* parent) {
     lv_obj_t* creature = splash_mini_create(idle_group, "cloud", L.idle_px);
     if (creature) lv_obj_align(creature, LV_ALIGN_CENTER, 0, -20);
 
+    lbl_idle_session_reset = lv_label_create(idle_group);
+    lv_label_set_text(lbl_idle_session_reset, "");
+    lv_obj_set_style_text_font(lbl_idle_session_reset, L.pace_font, 0);
+    lv_obj_set_style_text_color(lbl_idle_session_reset, COL_DIM, 0);
+    lv_obj_align(lbl_idle_session_reset, LV_ALIGN_BOTTOM_MID, 0, L.anim_y - 52);
+
+    lbl_idle_weekly_reset = lv_label_create(idle_group);
+    lv_label_set_text(lbl_idle_weekly_reset, "");
+    lv_obj_set_style_text_font(lbl_idle_weekly_reset, L.pace_font, 0);
+    lv_obj_set_style_text_color(lbl_idle_weekly_reset, COL_DIM, 0);
+    lv_obj_align(lbl_idle_weekly_reset, LV_ALIGN_BOTTOM_MID, 0, L.anim_y - 30);
+
     lv_obj_add_flag(idle_group, LV_OBJ_FLAG_HIDDEN);  // update_view_state decides
+}
+
+static void update_idle_reset_labels(void) {
+    if (!lbl_idle_session_reset || !lbl_idle_weekly_reset) return;
+    if (!data_received || last_session_reset_mins < 0) {
+        lv_label_set_text(lbl_idle_session_reset, "");
+        lv_label_set_text(lbl_idle_weekly_reset, "");
+        return;
+    }
+
+    const int elapsed_mins = (int)((lv_tick_get() - last_data_ms) / 60000);
+    const int session_mins = (last_session_reset_mins > elapsed_mins)
+                           ? (last_session_reset_mins - elapsed_mins) : 0;
+
+    char reset_buf[32];
+    char line_buf[48];
+    format_reset_time(session_mins, reset_buf, sizeof(reset_buf));
+    snprintf(line_buf, sizeof(line_buf), "5h: %s", reset_buf);
+    lv_label_set_text(lbl_idle_session_reset, line_buf);
+
+    if (last_data_enterprise || last_weekly_reset_mins < 0) {
+        lv_label_set_text(lbl_idle_weekly_reset, "");
+        return;
+    }
+
+    const int weekly_mins = (last_weekly_reset_mins > elapsed_mins)
+                          ? (last_weekly_reset_mins - elapsed_mins) : 0;
+    format_reset_time(weekly_mins, reset_buf, sizeof(reset_buf));
+    snprintf(line_buf, sizeof(line_buf), "7d: %s", reset_buf);
+    lv_label_set_text(lbl_idle_weekly_reset, line_buf);
 }
 
 static void init_usage_screen(lv_obj_t* scr) {
@@ -596,6 +643,9 @@ void ui_update(const UsageData* data) {
     if (!data->ok) return;          // a {"ok":false} "no data" beat → fall through to idle, keep last numbers
     last_data_ms = lv_tick_get();   // a real usage update just landed
     data_received = true;
+    last_data_enterprise = data->enterprise;
+    last_session_reset_mins = data->session_reset_mins;
+    last_weekly_reset_mins = data->weekly_reset_mins;
 
     if (data->clock_epoch > 0) {    // daemon supplied wall-clock time → drive the title clock
         clock_base_epoch = data->clock_epoch;
@@ -701,6 +751,7 @@ static void update_view_state(void) {
 void ui_tick_anim(void) {
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
+    update_idle_reset_labels();
     if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
 
     uint32_t now = lv_tick_get();
