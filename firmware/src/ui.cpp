@@ -232,9 +232,12 @@ static lv_obj_t* idle_group;            // the "Zzz" idle screen
 static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
 static bool      data_received = false; // any valid update since boot
 static bool      data_ok = true;        // last payload's ok flag; a {"ok":false} beat = "no fresh data"
+static long      last_data_epoch = 0;   // daemon wall-clock epoch from the last valid usage update
 static bool      last_data_enterprise = false;
 static int       last_session_reset_mins = -1;
 static int       last_weekly_reset_mins = -1;
+static int       idle_session_rendered_mins = -2;  // -2 = never rendered, -1 = hidden
+static int       idle_weekly_rendered_mins = -2;   // -2 = never rendered, -1 = hidden
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
 static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
@@ -250,6 +253,8 @@ static uint8_t anim_spinner_idx = 0;
 static uint8_t anim_phase = 0;
 static uint8_t anim_msg_idx = 0;
 static uint32_t anim_msg_start = 0;
+static int idle_labels_last_refresh_min = -1;
+static int idle_labels_last_view = -1;
 #define ANIM_MSG_MS     4000
 
 static const char* const spinner_frames[] = {
@@ -313,6 +318,18 @@ static void format_reset_time(int mins, char* buf, size_t len) {
         snprintf(buf, len, "Resets in %dh %dm", mins / 60, mins % 60);
     } else {
         snprintf(buf, len, "Resets in %dd %dh", mins / 1440, (mins % 1440) / 60);
+    }
+
+    static void age_cached_resets(int elapsed_mins) {
+        if (elapsed_mins <= 0) return;
+        if (last_session_reset_mins >= 0) {
+            last_session_reset_mins = (last_session_reset_mins > elapsed_mins)
+                                    ? (last_session_reset_mins - elapsed_mins) : 0;
+        }
+        if (last_weekly_reset_mins >= 0) {
+            last_weekly_reset_mins = (last_weekly_reset_mins > elapsed_mins)
+                                   ? (last_weekly_reset_mins - elapsed_mins) : 0;
+        }
     }
 }
 
@@ -488,32 +505,60 @@ static void build_idle_group(lv_obj_t* parent) {
 
 static void update_idle_reset_labels(void) {
     if (!lbl_idle_session_reset || !lbl_idle_weekly_reset) return;
-    if (!data_received || last_session_reset_mins < 0) {
-        lv_label_set_text(lbl_idle_session_reset, "");
-        lv_label_set_text(lbl_idle_weekly_reset, "");
+    if (!data_received) {
+        if (idle_session_rendered_mins != -1) {
+            lv_label_set_text(lbl_idle_session_reset, "");
+            idle_session_rendered_mins = -1;
+        }
+        if (idle_weekly_rendered_mins != -1) {
+            lv_label_set_text(lbl_idle_weekly_reset, "");
+            idle_weekly_rendered_mins = -1;
+        }
         return;
     }
 
-    const int elapsed_mins = (int)((lv_tick_get() - last_data_ms) / 60000);
-    const int session_mins = (last_session_reset_mins > elapsed_mins)
-                           ? (last_session_reset_mins - elapsed_mins) : 0;
-
+    int elapsed_mins;
+    if (clock_base_epoch > 0 && last_data_epoch > 0) {
+        const long now_epoch = clock_base_epoch + (long)((lv_tick_get() - clock_base_ms) / 1000);
+        const long elapsed_s = (now_epoch > last_data_epoch) ? (now_epoch - last_data_epoch) : 0;
+        elapsed_mins = (int)(elapsed_s / 60);
+    } else {
+        elapsed_mins = (int)((lv_tick_get() - last_data_ms) / 60000);
+    }
     char reset_buf[32];
     char line_buf[48];
-    format_reset_time(session_mins, reset_buf, sizeof(reset_buf));
-    snprintf(line_buf, sizeof(line_buf), "5h: %s", reset_buf);
-    lv_label_set_text(lbl_idle_session_reset, line_buf);
+    if (last_session_reset_mins < 0) {
+        if (idle_session_rendered_mins != -1) {
+            lv_label_set_text(lbl_idle_session_reset, "");
+            idle_session_rendered_mins = -1;
+        }
+    } else {
+        const int session_mins = (last_session_reset_mins > elapsed_mins)
+                               ? (last_session_reset_mins - elapsed_mins) : 0;
+        if (session_mins != idle_session_rendered_mins) {
+            format_reset_time(session_mins, reset_buf, sizeof(reset_buf));
+            snprintf(line_buf, sizeof(line_buf), "5h: %s", reset_buf);
+            lv_label_set_text(lbl_idle_session_reset, line_buf);
+            idle_session_rendered_mins = session_mins;
+        }
+    }
 
     if (last_data_enterprise || last_weekly_reset_mins < 0) {
-        lv_label_set_text(lbl_idle_weekly_reset, "");
+        if (idle_weekly_rendered_mins != -1) {
+            lv_label_set_text(lbl_idle_weekly_reset, "");
+            idle_weekly_rendered_mins = -1;
+        }
         return;
     }
 
     const int weekly_mins = (last_weekly_reset_mins > elapsed_mins)
                           ? (last_weekly_reset_mins - elapsed_mins) : 0;
-    format_reset_time(weekly_mins, reset_buf, sizeof(reset_buf));
-    snprintf(line_buf, sizeof(line_buf), "7d: %s", reset_buf);
-    lv_label_set_text(lbl_idle_weekly_reset, line_buf);
+    if (weekly_mins != idle_weekly_rendered_mins) {
+        format_reset_time(weekly_mins, reset_buf, sizeof(reset_buf));
+        snprintf(line_buf, sizeof(line_buf), "7d: %s", reset_buf);
+        lv_label_set_text(lbl_idle_weekly_reset, line_buf);
+        idle_weekly_rendered_mins = weekly_mins;
+    }
 }
 
 static void init_usage_screen(lv_obj_t* scr) {
@@ -639,23 +684,40 @@ void ui_init(void) {
 
 void ui_update(const UsageData* data) {
     if (!data->valid) return;
+    const uint32_t now_ms = lv_tick_get();
     data_ok = data->ok;
-    if (!data->ok) return;          // a {"ok":false} "no data" beat → fall through to idle, keep last numbers
-    last_data_ms = lv_tick_get();   // a real usage update just landed
-    data_received = true;
-    last_data_enterprise = data->enterprise;
-    last_session_reset_mins = data->session_reset_mins;
-    last_weekly_reset_mins = data->weekly_reset_mins;
 
     if (data->clock_epoch > 0) {    // daemon supplied wall-clock time → drive the title clock
         clock_base_epoch = data->clock_epoch;
-        clock_base_ms = last_data_ms;
+        clock_base_ms = now_ms;
         clock_fmt = data->clock_fmt;
     } else if (clock_base_epoch != 0) {   // clock turned off daemon-side → revert title to "Usage"
         clock_base_epoch = 0;
         clock_last_min = -1;
         lv_label_set_text(lbl_title, "Usage");
     }
+    if (!data->ok) {  // "no data" beat — keep last numbers, keep aging reset windows
+        if (data_received) {
+            int elapsed_mins = 0;
+            if (data->clock_epoch > 0 && last_data_epoch > 0) {
+                const long elapsed_s = data->clock_epoch - last_data_epoch;
+                if (elapsed_s > 0) elapsed_mins = (int)(elapsed_s / 60);
+                last_data_epoch = data->clock_epoch;
+            } else {
+                elapsed_mins = (int)((now_ms - last_data_ms) / 60000);
+                if (elapsed_mins > 0) last_data_ms += (uint32_t)elapsed_mins * 60000;
+            }
+            age_cached_resets(elapsed_mins);
+        }
+        return;
+    }
+
+    last_data_ms = now_ms;   // a real usage update just landed
+    data_received = true;
+    last_data_epoch = data->clock_epoch;
+    last_data_enterprise = data->enterprise;
+    last_session_reset_mins = data->session_reset_mins;
+    last_weekly_reset_mins = data->weekly_reset_mins;
 
     int s_pct = (int)(data->session_pct + 0.5f);
 
@@ -751,10 +813,16 @@ static void update_view_state(void) {
 void ui_tick_anim(void) {
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
-    update_idle_reset_labels();
-    if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
-
     uint32_t now = lv_tick_get();
+    if (view_state == 1) {
+        const int now_min = (int)(now / 60000);
+        if (idle_labels_last_view != 1 || now_min != idle_labels_last_refresh_min) {
+            update_idle_reset_labels();
+            idle_labels_last_refresh_min = now_min;
+        }
+        splash_mini_tick();   // animate the sleeping creature on the idle screen
+    }
+    idle_labels_last_view = view_state;
 
     // Title clock: once the daemon has sent wall-clock time, replace "Usage" with
     // the live time, advanced locally so it ticks every minute between payloads.
