@@ -234,6 +234,7 @@ static long      last_data_epoch = 0;   // daemon wall-clock epoch from the last
 static bool      last_data_enterprise = false;
 static int       last_session_reset_mins = -1;
 static int       last_weekly_reset_mins = -1;
+static char      last_weekly_reset_text[64] = "---";
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
 static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
@@ -346,6 +347,7 @@ static void render_cached_usage_reset_labels(void) {
     if (last_data_enterprise) {
         lv_label_set_text(lbl_session_reset, "");
         lv_obj_add_flag(lbl_session_reset, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(lbl_weekly_reset, last_weekly_reset_text);
         return;
     }
 
@@ -742,6 +744,7 @@ void ui_update(const UsageData* data) {
         snprintf(buf, sizeof(buf), "#%s %s# - #faf9f5 Resets %s#",
                  pace_hex, pace_text, data->reset_date);
         lv_label_set_text(lbl_weekly_reset, buf);
+        strlcpy(last_weekly_reset_text, buf, sizeof(last_weekly_reset_text));
     } else {
         int w_pct = (int)(data->weekly_pct + 0.5f);
         lv_label_set_text_fmt(lbl_weekly_pct, "%d%%", w_pct);
@@ -749,6 +752,7 @@ void ui_update(const UsageData* data) {
         lv_obj_set_style_bg_color(bar_weekly, pct_color(data->weekly_pct), LV_PART_INDICATOR);
         format_reset_time(data->weekly_reset_mins, buf, sizeof(buf));
         lv_label_set_text(lbl_weekly_reset, buf);
+        strlcpy(last_weekly_reset_text, buf, sizeof(last_weekly_reset_text));
     }
 }
 
