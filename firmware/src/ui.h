@@ -14,6 +14,10 @@ void ui_init(void);
 void ui_update(const UsageData* data);
 void ui_tick_anim(void);
 void ui_show_screen(screen_t screen);
+
+// Wall-clock time as the usage page shows it ("14:07"), empty until the
+// daemon has sent the time. The tool pages put it in their own header.
+void ui_clock_text(char* buf, size_t n);
 void ui_toggle_splash(void);
 // Tap / BOOT: splash -> Claude -> Codex -> Copilot -> splash.
 void ui_next_screen(void);

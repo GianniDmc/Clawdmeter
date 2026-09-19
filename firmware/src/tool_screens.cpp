@@ -119,6 +119,7 @@ struct CodexPanel {
 static lv_obj_t*  cx_page = nullptr;
 static CodexPanel cx_panels[2];
 static lv_obj_t*  cx_status = nullptr;
+static lv_obj_t*  cx_clock = nullptr;
 static char       cx_state[8] = "";
 static bool       cx_switched = false;   // we moved the user here for a "wait"
 
@@ -160,6 +161,8 @@ static void build_codex(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t 
     build_codex_panel(cx_page, 110, "5h limit", &cx_panels[0]);
     build_codex_panel(cx_page, 266, "weekly limit", &cx_panels[1]);
     cx_status = make_label(cx_page, &font_mono_18, CX_DIM, MARGIN + 2, 428, "- idle");
+    cx_clock = make_label(cx_page, &font_mono_18, CX_DIM, 0, 36, "");
+    lv_obj_align(cx_clock, LV_ALIGN_TOP_MID, 0, 36);
 }
 
 static void paint_codex_status(void) {
@@ -243,6 +246,7 @@ static lv_obj_t* cp_grid_title = nullptr;
 static lv_obj_t* cp_grid = nullptr;
 static CopilotGrid cp_grid_data = {};
 static bool      cp_grid_valid = false;
+static lv_obj_t* cp_clock = nullptr;
 static lv_obj_t* cp_dot = nullptr;       // status row: OpenCode's live state
 static lv_obj_t* cp_status = nullptr;
 static char      oc_state[8] = "";
@@ -319,6 +323,8 @@ static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_
     // What OpenCode is doing, as a GitHub-style status dot and label.
     cp_dot = make_box(cp_page, MARGIN + 3, 61, 8, 8, GH_MUTED, GH_MUTED, 4);
     cp_status = make_label(cp_page, &font_styrene_16, GH_MUTED, MARGIN + 24, 56, "OpenCode idle");
+    cp_clock = make_label(cp_page, &font_styrene_20, GH_MUTED, 0, 32, "");
+    lv_obj_align(cp_clock, LV_ALIGN_TOP_MID, 0, 32);
 
     const int gap = 12;
     const int card_w = (c.width - 2 * MARGIN - gap) / 2;
@@ -371,10 +377,10 @@ static void paint_copilot_status(void) {
     const char* text = "OpenCode idle";
     lv_opa_t dot_opa = LV_OPA_COVER;
     if (strcmp(oc_state, "work") == 0) {
-        static const char* const dots[4] = { "", ".", "..", "..." };
-        lv_label_set_text_fmt(cp_status, "OpenCode working%s", dots[(millis() / 400) & 3]);
         col = GH_ACCENT;
-        text = nullptr;
+        text = "OpenCode working...";
+        // Breathing dot, like GitHub's in-progress badge.
+        dot_opa = (millis() / 500) & 1 ? LV_OPA_COVER : LV_OPA_50;
     } else if (strcmp(oc_state, "wait") == 0) {
         // Blink: the one state that needs the user.
         col = GH_WARN;
@@ -423,7 +429,13 @@ void tool_screens_tick(void) {
     static uint32_t last = 0;
     if (millis() - last < 150) return;
     last = millis();
-    if (cx_state[0] && !lv_obj_has_flag(cx_page, LV_OBJ_FLAG_HIDDEN)) paint_codex_status();
+    char clock[12];
+    ui_clock_text(clock, sizeof(clock));
+    if (!lv_obj_has_flag(cx_page, LV_OBJ_FLAG_HIDDEN)) {
+        lv_label_set_text(cx_clock, clock);
+        if (cx_state[0]) paint_codex_status();
+    }
+    if (!lv_obj_has_flag(cp_page, LV_OBJ_FLAG_HIDDEN)) lv_label_set_text(cp_clock, clock);
     if ((strcmp(oc_state, "work") == 0 || strcmp(oc_state, "wait") == 0) &&
         !lv_obj_has_flag(cp_page, LV_OBJ_FLAG_HIDDEN)) paint_copilot_status();
 }

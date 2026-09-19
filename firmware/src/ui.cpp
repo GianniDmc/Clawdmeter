@@ -814,6 +814,20 @@ void ui_tick_anim(void) {
     lv_obj_set_style_text_color(lbl_anim, color, 0);
 }
 
+void ui_clock_text(char* buf, size_t n) {
+    if (clock_base_epoch <= 0) { buf[0] = '\0'; return; }
+    time_t cur = (time_t)(clock_base_epoch + (lv_tick_get() - clock_base_ms) / 1000);
+    struct tm tmv;
+    gmtime_r(&cur, &tmv);   // epoch is already local wall-clock
+    if (clock_fmt == 12) {
+        int h12 = tmv.tm_hour % 12;
+        if (h12 == 0) h12 = 12;
+        snprintf(buf, n, "%d:%02d %s", h12, tmv.tm_min, tmv.tm_hour < 12 ? "AM" : "PM");
+    } else {
+        snprintf(buf, n, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+    }
+}
+
 static void apply_battery_visibility(void) {
     if (!battery_img) return;
     if (current_screen == SCREEN_SPLASH) {

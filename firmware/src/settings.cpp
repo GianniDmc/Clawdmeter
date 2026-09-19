@@ -359,10 +359,10 @@ void settings_init(lv_obj_t* parent) {
     make_row_label(y, "End");
     make_stepper(y, FIELD_SOUND, "<", ">", false, &sound_val);
     y += ROW_STEP;
-    make_row_label(y, "Claude");
+    make_row_label(y, "Alerts");
     alert_btn = make_toggle(y, alert_toggle_cb, &alert_lbl);
     y += ROW_H + 4;
-    make_hint(y, "Sound when Claude Code needs you or is done");
+    make_hint(y, "Sound when Claude, Codex or OpenCode needs you or is done");
 
     // -- Buttons
     page = pages[TAB_BUTTONS] = make_page();
