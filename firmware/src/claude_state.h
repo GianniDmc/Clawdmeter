@@ -7,3 +7,8 @@
 //
 // Only changes act, so the daemon repeating the same state every poll is free.
 void claude_state_update(const char* cc);
+
+enum ClaudeActivity { CLAUDE_IDLE, CLAUDE_WORK, CLAUDE_WAIT, CLAUDE_DONE };
+
+// The last state received, for the usage page's status line.
+ClaudeActivity claude_state_current(void);

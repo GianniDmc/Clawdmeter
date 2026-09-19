@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "claude_state.h"
 #include "splash.h"
 #include "charge_anim.h"
 #include "pomodoro.h"
@@ -767,8 +768,13 @@ void ui_tick_anim(void) {
     anim_spinner_idx = (anim_phase < SPINNER_COUNT) ? anim_phase
                                                     : (SPINNER_PHASES - anim_phase);
 
-    // Status text by priority. Whimsical messages only when connected & settled.
+    // Status text by priority. Once connected and settled it mirrors what
+    // Claude Code is doing (hooks -> daemon "cc"): the spinning whimsical
+    // words only while it works, like Claude Code's own spinner.
+    const char* glyph = spinner_frames[anim_spinner_idx];
     const char* text;
+    const char* ellipsis = "\xE2\x80\xA6";
+    lv_color_t  color = COL_ACCENT;
     if (!s_ble_connected) {
         text = "Waiting";              // advertising / waiting for a host connection
     } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
@@ -776,14 +782,36 @@ void ui_tick_anim(void) {
     } else if (now - connected_at_ms < 5000) {
         text = "Connected";
     } else {
-        text = anim_messages[anim_msg_idx];
+        switch (claude_state_current()) {
+        case CLAUDE_WORK:
+            text = anim_messages[anim_msg_idx];
+            break;
+        case CLAUDE_WAIT:              // blinks: Claude is blocked on you
+            glyph = spinner_frames[3];
+            text = "Needs your input";
+            ellipsis = "";
+            color = ((now / 500) & 1) ? COL_TEXT : COL_ACCENT;
+            break;
+        case CLAUDE_DONE:
+            glyph = spinner_frames[3];
+            text = "Done";
+            ellipsis = "";
+            color = COL_TEXT;
+            break;
+        default:
+            glyph = spinner_frames[0];
+            text = "Idle";
+            ellipsis = "";
+            color = COL_DIM;
+            break;
+        }
     }
 
     // All states share the whimsical style: "<glyph> <Title-case word>…"
     static char buf[80];
-    snprintf(buf, sizeof(buf), "%s %s\xE2\x80\xA6",
-             spinner_frames[anim_spinner_idx], text);
+    snprintf(buf, sizeof(buf), "%s %s%s", glyph, text, ellipsis);
     lv_label_set_text(lbl_anim, buf);
+    lv_obj_set_style_text_color(lbl_anim, color, 0);
 }
 
 static void apply_battery_visibility(void) {
