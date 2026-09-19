@@ -187,8 +187,9 @@ static void paint_codex_status(void) {
 // A tool's live state changed: waiting on the user sounds the alert, wakes
 // the panel and brings its page up (then goes back once answered); a finished
 // turn chimes. Same rules as Claude Code's (claude_state.cpp).
-static void tool_state_changed(const char* st, const char* prev, screen_t page,
-                               screen_t* back_to, void (*set_waiting)(bool)) {
+static void tool_state_changed(const char* st, const char* prev, const char* name,
+                               screen_t page, screen_t* back_to,
+                               void (*set_waiting)(bool)) {
     const bool alerts = settings_sound().claude_alerts;
     const bool wait = strcmp(st, "wait") == 0;
     set_waiting(wait);
@@ -201,8 +202,9 @@ static void tool_state_changed(const char* st, const char* prev, screen_t page,
             *back_to = ui_get_current_screen();      // restore it once answered
             ui_show_screen(page);
         }
-    } else if (strcmp(st, "done") == 0 && alerts) {
-        sound_hal_play(settings_sound().end_sound);
+    } else if (strcmp(st, "done") == 0) {
+        if (alerts) sound_hal_play(settings_sound().end_sound);
+        pomodoro_note_tool_done(name);
     }
 
     if (strcmp(prev, "wait") == 0 && !wait && *back_to != SCREEN_COUNT) {
@@ -223,7 +225,7 @@ void tool_screens_codex(const CodexData& d) {
         strlcpy(prev, cx_state, sizeof(prev));
         strlcpy(cx_state, d.st, sizeof(cx_state));
         Serial.printf("Codex: %s\n", cx_state[0] ? cx_state : "idle");
-        tool_state_changed(cx_state, prev, SCREEN_CODEX, &cx_back,
+        tool_state_changed(cx_state, prev, "Codex", SCREEN_CODEX, &cx_back,
                            pomodoro_set_codex_waiting);
     }
     paint_codex_status();
@@ -404,7 +406,7 @@ void tool_screens_opencode_state(const char* st) {
         strlcpy(prev, oc_state, sizeof(prev));
         strlcpy(oc_state, st, sizeof(oc_state));
         Serial.printf("OpenCode: %s\n", oc_state[0] ? oc_state : "idle");
-        tool_state_changed(oc_state, prev, SCREEN_COPILOT, &cp_back,
+        tool_state_changed(oc_state, prev, "OpenCode", SCREEN_COPILOT, &cp_back,
                            pomodoro_set_opencode_waiting);
     }
     paint_copilot_status();

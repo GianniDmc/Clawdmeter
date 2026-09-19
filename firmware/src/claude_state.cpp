@@ -49,6 +49,7 @@ void claude_state_update(const char* cc) {
     case CLAUDE_DONE:
         splash_set_override("jumping happy");
         if (alerts) sound_hal_play(settings_sound().end_sound);
+        pomodoro_note_tool_done("Claude");
         break;
     case CLAUDE_IDLE:
         splash_set_override(NULL);

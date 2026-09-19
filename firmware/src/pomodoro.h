@@ -70,6 +70,10 @@ void pomodoro_set_claude_waiting(bool waiting);
 void pomodoro_set_codex_waiting(bool waiting);
 void pomodoro_set_opencode_waiting(bool waiting);
 
+// A tool finished its turn: the timer screen names it for a few seconds
+// ("Codex done"), so a finished run isn't just a sound.
+void pomodoro_note_tool_done(const char* tool);
+
 // While suspended the overlay never shows, whatever the orientation — the
 // settings page needs the device on its side without a block starting.
 void pomodoro_set_suspended(bool suspended);

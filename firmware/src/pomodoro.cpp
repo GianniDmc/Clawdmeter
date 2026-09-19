@@ -57,6 +57,11 @@ static bool     suspended = false;
 static bool     claude_waiting = false;
 static bool     codex_waiting  = false;
 static bool     opencode_waiting = false;
+// A tool that finished while the timer runs: named for a few seconds, since
+// the sound alone is missed by anyone who stepped away.
+static const char* done_tool = nullptr;
+static uint32_t    done_tool_until = 0;
+#define TOOL_DONE_MS 60000
 static int      cur_mode  = -1;       // -1 while hidden
 static bool     long_break = false;   // the break on screen is the long one
 static uint32_t total_ms  = 0;        // length of the block on screen
@@ -106,10 +111,19 @@ static void paint_dots(void) {
     }
 }
 
+static bool tool_done_showing(void) {
+    return done_tool && (int32_t)(done_tool_until - millis()) > 0;
+}
+
 static const char* hint_text(void) {
     if (claude_waiting) return "Claude needs you";
     if (codex_waiting)  return "Codex needs you";
     if (opencode_waiting) return "OpenCode needs you";
+    if (tool_done_showing()) {
+        static char buf[24];
+        snprintf(buf, sizeof(buf), "%s done", done_tool);
+        return buf;
+    }
     if (!done)          return "Tap to restart";
     if (cur_mode == MODE_WORK) {
         return completed >= POMODORO_CYCLE ? "Turn it for a long break" : "Turn it for a break";
@@ -132,7 +146,10 @@ static void paint(bool force) {
     else                            lv_label_set_text(mode_lbl, long_break ? "LONG BREAK" : "BREAK");
 
     lv_label_set_text(hint_lbl, hint_text());
-    lv_obj_set_style_text_color(hint_lbl, (claude_waiting || codex_waiting || opencode_waiting) ? THEME_ACCENT : THEME_DIM, 0);
+    lv_color_t hint_col = THEME_DIM;
+    if (claude_waiting || codex_waiting || opencode_waiting) hint_col = THEME_ACCENT;
+    else if (tool_done_showing())                            hint_col = THEME_GREEN;
+    lv_obj_set_style_text_color(hint_lbl, hint_col, 0);
     paint_dots();
 }
 
@@ -222,6 +239,12 @@ void pomodoro_set_claude_waiting(bool waiting) {
 void pomodoro_set_codex_waiting(bool waiting) {
     if (waiting == codex_waiting) return;
     codex_waiting = waiting;
+    if (s_active) paint(true);
+}
+
+void pomodoro_note_tool_done(const char* tool) {
+    done_tool = tool;
+    done_tool_until = millis() + TOOL_DONE_MS;
     if (s_active) paint(true);
 }
 
