@@ -9,6 +9,7 @@
 #include "ble.h"
 #include "splash.h"
 #include "charge_anim.h"
+#include "pomodoro.h"
 #include "usage_rate.h"
 #include "idle.h"
 #include "idle_cfg.h"
@@ -299,6 +300,7 @@ void loop() {
     power_hal_tick();
     imu_hal_tick();
     sound_hal_tick();
+    pomodoro_tick();
     splash_tick();
     splash_mascot_tick();
     // Rotation transition (blank + ramp) would fight the idle fade — skip
@@ -350,7 +352,8 @@ void loop() {
             if (!idle_consume_wake_press()) {
                 // On splash: cycle animations. On the usage view: cycle
                 // screen brightness (single non-splash view, no more screens).
-                if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
+                if (pomodoro_is_active())                     pomodoro_restart();
+                else if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
                 else                                          brightness_cycle();
             }
         }
