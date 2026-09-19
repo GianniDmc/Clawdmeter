@@ -99,11 +99,12 @@ static void fmt_reset(char* buf, size_t n, int mins) {
     else                     snprintf(buf, n, "resets in %dd %dh", mins / (24 * 60), (mins / 60) % 24);
 }
 
-// 8147 -> "8,147", the way GitHub prints credits.
+// 8147 -> "8 147": French grouping. A plain space — the fonts are ASCII-only,
+// so no narrow no-break space.
 static void fmt_thousands(char* buf, size_t n, uint32_t v) {
-    if (v >= 1000000) snprintf(buf, n, "%lu,%03lu,%03lu", (unsigned long)(v / 1000000),
+    if (v >= 1000000) snprintf(buf, n, "%lu %03lu %03lu", (unsigned long)(v / 1000000),
                                (unsigned long)((v / 1000) % 1000), (unsigned long)(v % 1000));
-    else if (v >= 1000) snprintf(buf, n, "%lu,%03lu", (unsigned long)(v / 1000), (unsigned long)(v % 1000));
+    else if (v >= 1000) snprintf(buf, n, "%lu %03lu", (unsigned long)(v / 1000), (unsigned long)(v % 1000));
     else                snprintf(buf, n, "%lu", (unsigned long)v);
 }
 
