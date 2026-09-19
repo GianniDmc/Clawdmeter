@@ -48,6 +48,8 @@ DEFAULT_CONFIG_DIR = Path.home() / ".claude"
 SAVED_ADDR_FILE = Path.home() / ".config" / "claude-usage-monitor" / "ble-address"
 # Written by claude_state_hook.py, one <session_id>.json per Claude Code session.
 CLAUDE_STATE_DIR = Path.home() / ".config" / "claude-usage-monitor" / "claude-state"
+# The OpenCode plugin (daemon/opencode/clawdmeter.js) writes here.
+OPENCODE_STATE_DIR = CLAUDE_STATE_DIR / "opencode"
 CONFIG_FILE = Path.home() / ".config" / "claude-usage-monitor" / "config"
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -454,11 +456,13 @@ def read_claude_state(state_dir: Path | None = None, now: float | None = None) -
     return ""
 
 
-def other_tool_payloads(codex_state: str) -> list[dict]:
+def other_tool_payloads(codex_state: str, opencode_state: str = "") -> list[dict]:
     """The Codex and Copilot messages, each small enough for one BLE write.
 
     Tagged with "k" so the firmware routes them away from the Claude usage
     parser. Codex goes even without numbers, so its live state still shows.
+    OpenCode's state (the Copilot page's status line) has its own tiny
+    message, so a change never waits on the Copilot database query.
     """
     out: list[dict] = []
     codex = read_codex() or {}
@@ -471,7 +475,12 @@ def other_tool_payloads(codex_state: str) -> list[dict]:
     if copilot:
         out.append({"k": "cp", **copilot["summary"]})
         out.append({"k": "cpg", **copilot["grid"]})
+    out.append(opencode_payload(opencode_state))
     return out
+
+
+def opencode_payload(state: str) -> dict:
+    return {"k": "ocs", "st": state}
 
 
 async def poll_api(token: str) -> dict | None:
@@ -830,6 +839,7 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
     last_payload: dict | None = None   # last usage payload, re-sent with a new "cc"
     last_cc = ""
     last_cx = ""                        # Codex state last sent
+    last_oc = ""                        # OpenCode state last sent
     try:
         while client.is_connected and not stop_event.is_set():
             now = time.time()
@@ -852,6 +862,11 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                         await session.write_payload(msg)
                 last_cx = cx
 
+            oc = read_claude_state(OPENCODE_STATE_DIR)
+            if oc != last_oc and last_payload is not None:
+                if await session.write_payload(opencode_payload(oc)):
+                    last_oc = oc
+
             if session.refresh_requested.is_set() or elapsed >= POLL_INTERVAL:
                 session.refresh_requested.clear()
                 # Pure free-ride: read whatever access token(s) Claude Code
@@ -872,7 +887,8 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                         last_cc = cc
                         used_successfully = True
                         last_cx = read_claude_state(CLAUDE_STATE_DIR / "codex")
-                        for msg in other_tool_payloads(last_cx):
+                        last_oc = read_claude_state(OPENCODE_STATE_DIR)
+                        for msg in other_tool_payloads(last_cx, last_oc):
                             await session.write_payload(msg)
                 elif dead:
                     # No live token in any config dir (missing, or a 401/expired

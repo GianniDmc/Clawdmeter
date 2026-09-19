@@ -144,6 +144,8 @@ static bool parse_tool_message(const char* json) {
         if (g.days_in_month > COPILOT_MAX_DAYS) g.days_in_month = COPILOT_MAX_DAYS;
         if (g.first_wd > 6) g.first_wd = 0;
         tool_screens_copilot_grid(g);
+    } else if (strcmp(k, "ocs") == 0) {
+        tool_screens_opencode_state(doc["st"] | "");
     }
     return true;
 }

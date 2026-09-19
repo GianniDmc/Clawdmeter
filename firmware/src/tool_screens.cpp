@@ -181,27 +181,30 @@ static void paint_codex_status(void) {
     }
 }
 
-static void codex_state_changed(const char* prev) {
+// A tool's live state changed: waiting on the user sounds the alert, wakes
+// the panel and brings its page up (then goes back once answered); a finished
+// turn chimes. Same rules as Claude Code's (claude_state.cpp).
+static void tool_state_changed(const char* st, const char* prev, screen_t page,
+                               bool* switched, void (*set_waiting)(bool)) {
     const bool alerts = settings_sound().claude_alerts;
-    const bool wait = strcmp(cx_state, "wait") == 0;
-    pomodoro_set_codex_waiting(wait);
+    const bool wait = strcmp(st, "wait") == 0;
+    set_waiting(wait);
 
     if (wait) {
         if (alerts) sound_hal_play(SOUND_ALERT);
         idle_note_activity();
-        if (ui_get_current_screen() != SCREEN_CODEX &&
+        if (ui_get_current_screen() != page &&
             !pomodoro_is_active() && !settings_is_open()) {
-            ui_show_screen(SCREEN_CODEX);
-            cx_switched = true;
+            ui_show_screen(page);
+            *switched = true;
         }
-    } else if (strcmp(cx_state, "done") == 0 && alerts) {
+    } else if (strcmp(st, "done") == 0 && alerts) {
         sound_hal_play(SOUND_CHIME);
     }
 
-    // Back to where the user was once Codex stops waiting on them.
-    if (strcmp(prev, "wait") == 0 && !wait && cx_switched) {
-        cx_switched = false;
-        if (ui_get_current_screen() == SCREEN_CODEX) ui_show_screen(SCREEN_SPLASH);
+    if (strcmp(prev, "wait") == 0 && !wait && *switched) {
+        *switched = false;
+        if (ui_get_current_screen() == page) ui_show_screen(SCREEN_SPLASH);
     }
 }
 
@@ -216,7 +219,8 @@ void tool_screens_codex(const CodexData& d) {
         strlcpy(prev, cx_state, sizeof(prev));
         strlcpy(cx_state, d.st, sizeof(cx_state));
         Serial.printf("Codex: %s\n", cx_state[0] ? cx_state : "idle");
-        codex_state_changed(prev);
+        tool_state_changed(cx_state, prev, SCREEN_CODEX, &cx_switched,
+                           pomodoro_set_codex_waiting);
     }
     paint_codex_status();
 }
@@ -239,6 +243,13 @@ static lv_obj_t* cp_grid_title = nullptr;
 static lv_obj_t* cp_grid = nullptr;
 static CopilotGrid cp_grid_data = {};
 static bool      cp_grid_valid = false;
+static lv_obj_t* cp_dot = nullptr;       // status row: OpenCode's live state
+static lv_obj_t* cp_status = nullptr;
+static char      oc_state[8] = "";
+static bool      oc_switched = false;
+
+#define GH_WARN    lv_color_hex(0xd29922)   // GitHub's attention yellow
+#define GH_OK      lv_color_hex(0x3fb950)
 
 // One object that paints the whole calendar in its draw event. 42 cells as
 // separate widgets, each with its own styles, overflowed LVGL's 64 KB pool.
@@ -305,7 +316,9 @@ static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_
     lv_obj_t* mark = make_box(cp_page, MARGIN, 32, 14, 14, GH_ACCENT, GH_ACCENT, 4);
     (void)mark;
     make_label(cp_page, &font_styrene_28, GH_TEXT, MARGIN + 24, 22, "Copilot");
-    make_label(cp_page, &font_styrene_16, GH_MUTED, MARGIN + 24, 56, "AI credits, no monthly limit");
+    // What OpenCode is doing, as a GitHub-style status dot and label.
+    cp_dot = make_box(cp_page, MARGIN + 3, 61, 8, 8, GH_MUTED, GH_MUTED, 4);
+    cp_status = make_label(cp_page, &font_styrene_16, GH_MUTED, MARGIN + 24, 56, "OpenCode idle");
 
     const int gap = 12;
     const int card_w = (c.width - 2 * MARGIN - gap) / 2;
@@ -353,6 +366,43 @@ void tool_screens_copilot_grid(const CopilotGrid& g) {
     lv_obj_invalidate(cp_grid);
 }
 
+static void paint_copilot_status(void) {
+    lv_color_t col = GH_MUTED;
+    const char* text = "OpenCode idle";
+    lv_opa_t dot_opa = LV_OPA_COVER;
+    if (strcmp(oc_state, "work") == 0) {
+        static const char* const dots[4] = { "", ".", "..", "..." };
+        lv_label_set_text_fmt(cp_status, "OpenCode working%s", dots[(millis() / 400) & 3]);
+        col = GH_ACCENT;
+        text = nullptr;
+    } else if (strcmp(oc_state, "wait") == 0) {
+        // Blink: the one state that needs the user.
+        col = GH_WARN;
+        text = "OpenCode needs your input";
+        dot_opa = (millis() / 500) & 1 ? LV_OPA_COVER : LV_OPA_20;
+    } else if (strcmp(oc_state, "done") == 0) {
+        col = GH_OK;
+        text = "OpenCode done";
+    }
+    if (text) lv_label_set_text(cp_status, text);
+    lv_obj_set_style_text_color(cp_status, strcmp(oc_state, "") == 0 ? GH_MUTED : GH_TEXT, 0);
+    lv_obj_set_style_bg_color(cp_dot, col, 0);
+    lv_obj_set_style_bg_opa(cp_dot, dot_opa, 0);
+}
+
+void tool_screens_opencode_state(const char* st) {
+    if (!cp_page) return;
+    if (strcmp(st, oc_state) != 0) {
+        char prev[8];
+        strlcpy(prev, oc_state, sizeof(prev));
+        strlcpy(oc_state, st, sizeof(oc_state));
+        Serial.printf("OpenCode: %s\n", oc_state[0] ? oc_state : "idle");
+        tool_state_changed(oc_state, prev, SCREEN_COPILOT, &oc_switched,
+                           pomodoro_set_opencode_waiting);
+    }
+    paint_copilot_status();
+}
+
 // ---- Shared ---------------------------------------------------------------------
 
 void tool_screens_init(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t long_press_cb) {
@@ -369,9 +419,11 @@ void tool_screens_show(screen_t screen) {
 }
 
 void tool_screens_tick(void) {
-    if (!cx_page || lv_obj_has_flag(cx_page, LV_OBJ_FLAG_HIDDEN)) return;
+    if (!cx_page) return;
     static uint32_t last = 0;
     if (millis() - last < 150) return;
     last = millis();
-    if (cx_state[0]) paint_codex_status();
+    if (cx_state[0] && !lv_obj_has_flag(cx_page, LV_OBJ_FLAG_HIDDEN)) paint_codex_status();
+    if ((strcmp(oc_state, "work") == 0 || strcmp(oc_state, "wait") == 0) &&
+        !lv_obj_has_flag(cp_page, LV_OBJ_FLAG_HIDDEN)) paint_copilot_status();
 }

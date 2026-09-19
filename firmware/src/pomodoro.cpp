@@ -56,6 +56,7 @@ static bool     s_active  = false;
 static bool     suspended = false;
 static bool     claude_waiting = false;
 static bool     codex_waiting  = false;
+static bool     opencode_waiting = false;
 static int      cur_mode  = -1;       // -1 while hidden
 static bool     long_break = false;   // the break on screen is the long one
 static uint32_t total_ms  = 0;        // length of the block on screen
@@ -108,6 +109,7 @@ static void paint_dots(void) {
 static const char* hint_text(void) {
     if (claude_waiting) return "Claude needs you";
     if (codex_waiting)  return "Codex needs you";
+    if (opencode_waiting) return "OpenCode needs you";
     if (!done)          return "Tap to restart";
     if (cur_mode == MODE_WORK) {
         return completed >= POMODORO_CYCLE ? "Turn it for a long break" : "Turn it for a break";
@@ -130,7 +132,7 @@ static void paint(bool force) {
     else                            lv_label_set_text(mode_lbl, long_break ? "LONG BREAK" : "BREAK");
 
     lv_label_set_text(hint_lbl, hint_text());
-    lv_obj_set_style_text_color(hint_lbl, (claude_waiting || codex_waiting) ? THEME_ACCENT : THEME_DIM, 0);
+    lv_obj_set_style_text_color(hint_lbl, (claude_waiting || codex_waiting || opencode_waiting) ? THEME_ACCENT : THEME_DIM, 0);
     paint_dots();
 }
 
@@ -220,6 +222,12 @@ void pomodoro_set_claude_waiting(bool waiting) {
 void pomodoro_set_codex_waiting(bool waiting) {
     if (waiting == codex_waiting) return;
     codex_waiting = waiting;
+    if (s_active) paint(true);
+}
+
+void pomodoro_set_opencode_waiting(bool waiting) {
+    if (waiting == opencode_waiting) return;
+    opencode_waiting = waiting;
     if (s_active) paint(true);
 }
 

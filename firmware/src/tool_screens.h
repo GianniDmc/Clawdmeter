@@ -43,5 +43,9 @@ void tool_screens_codex(const CodexData& d);
 void tool_screens_copilot(const CopilotData& d);
 void tool_screens_copilot_grid(const CopilotGrid& g);
 
+// OpenCode's live state ("work" | "wait" | "done" | ""), shown on the Copilot
+// page — OpenCode is how Copilot gets used here (daemon "ocs" message).
+void tool_screens_opencode_state(const char* st);
+
 // Status-line animation.
 void tool_screens_tick(void);
