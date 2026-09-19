@@ -357,6 +357,8 @@ static int        mini_h = 0;
 static const splash_anim_def_t *mini_anim = NULL;
 static uint16_t   mini_frame = 0;
 static uint32_t   mini_started = 0;
+static int        mini_px = 0;     // box the creature is fitted into
+static size_t     mini_cap = 0;    // mini_buf capacity, pixels
 
 static void mini_render(void) {
     if (!mini_buf || !mini_anim) return;
@@ -382,6 +384,7 @@ lv_obj_t* splash_mini_create(lv_obj_t *parent, const char *anim_name, int px) {
         if (strcmp(splash_anims[i].name, anim_name) == 0) { mini_anim = &splash_anims[i]; break; }
     }
     if (!mini_anim) return NULL;
+    mini_px = px;
     const int amax = (mini_anim->w > mini_anim->h) ? mini_anim->w : mini_anim->h;
     mini_cell = px / amax;
     if (mini_cell < 1) mini_cell = 1;
@@ -394,6 +397,7 @@ lv_obj_t* splash_mini_create(lv_obj_t *parent, const char *anim_name, int px) {
 #endif
     mini_buf = (uint16_t*)heap_caps_malloc(mini_w * mini_h * 2, caps);
     if (!mini_buf) return NULL;
+    mini_cap = (size_t)mini_w * mini_h;
     mini_canvas = lv_canvas_create(parent);
     lv_canvas_set_buffer(mini_canvas, mini_buf, mini_w, mini_h, LV_COLOR_FORMAT_RGB565);
     mini_frame = 0;
@@ -402,11 +406,51 @@ lv_obj_t* splash_mini_create(lv_obj_t *parent, const char *anim_name, int px) {
     return mini_canvas;
 }
 
+bool splash_mini_play(const char *anim_name) {
+    if (!mini_canvas) return false;
+    const splash_anim_def_t *a = NULL;
+    for (int i = 0; i < SPLASH_ANIM_COUNT; i++) {
+        if (strcmp(splash_anims[i].name, anim_name) == 0) { a = &splash_anims[i]; break; }
+    }
+    if (!a) return false;
+    if (a == mini_anim) return true;
+
+    const int amax = (a->w > a->h) ? a->w : a->h;
+    int cell = mini_px / amax;
+    if (cell < 1) cell = 1;
+    const int w = a->w * cell, h = a->h * cell;
+    if ((size_t)w * h > mini_cap) {
+#ifdef BOARD_HAS_PSRAM
+        const uint32_t caps = MALLOC_CAP_SPIRAM;
+#else
+        const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+#endif
+        uint16_t *nb = (uint16_t*)heap_caps_malloc((size_t)w * h * 2, caps);
+        if (!nb) return false;
+        heap_caps_free(mini_buf);
+        mini_buf = nb;
+        mini_cap = (size_t)w * h;
+    }
+    mini_anim = a;
+    mini_cell = cell;
+    mini_w = w;
+    mini_h = h;
+    lv_canvas_set_buffer(mini_canvas, mini_buf, mini_w, mini_h, LV_COLOR_FORMAT_RGB565);
+    mini_frame = 0;
+    mini_started = millis();
+    mini_render();
+    return true;
+}
+
 void splash_mini_tick(void) {
     if (!mini_buf || !mini_anim || mini_anim->frame_count == 0) return;
     if (millis() - mini_started < mini_anim->holds[mini_frame]) return;
     mini_started = millis();
-    mini_frame = (mini_frame + 1) % mini_anim->frame_count;
+    // Intro once, then hold in the loop region (typing, floating...) instead
+    // of replaying the whole file — the outro would walk him off every cycle.
+    const uint16_t loop_end = mini_anim->loop_end < mini_anim->frame_count
+                            ? mini_anim->loop_end : mini_anim->frame_count - 1;
+    mini_frame = (mini_frame >= loop_end) ? mini_anim->loop_start : mini_frame + 1;
     mini_render();
 }
 
@@ -845,8 +889,35 @@ void splash_next(void) {
     Serial.printf("splash: -> %s\n", a->name);
 }
 
+static int16_t override_anim = -1;   // splash_anims[] index, -1 = rate groups decide
+
+void splash_set_override(const char *anim_name) {
+    int16_t idx = -1;
+    if (anim_name && anim_name[0]) {
+        for (int i = 0; i < SPLASH_ANIM_COUNT; i++) {
+            if (strcmp(splash_anims[i].name, anim_name) == 0) { idx = (int16_t)i; break; }
+        }
+    }
+    if (idx == override_anim) return;
+    override_anim = idx;
+    if (active) splash_pick_for_current_rate();
+}
+
 void splash_pick_for_current_rate(void) {
     if (SPLASH_ANIM_COUNT == 0) return;
+    if (override_anim >= 0) {
+        // Same code path as a rate pick, so the playback/walk state resets the
+        // way every other switch does. The 20 s rotation lands here too and
+        // simply restarts the pinned animation.
+        cur_anim = (uint16_t)override_anim;
+        cur_frame = 0;
+        frame_started_ms = millis();
+        last_pick_ms = frame_started_ms;
+        const splash_anim_def_t *oa = &splash_anims[cur_anim];
+        anim_reset(oa);
+        render_frame(compose_stage(oa, 0), oa->palette);
+        return;
+    }
     int g = usage_rate_group();
     if (g < 0 || g >= GROUP_COUNT) g = 0;
     if (group_size[g] == 0) return;

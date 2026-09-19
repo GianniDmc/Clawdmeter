@@ -41,6 +41,16 @@ lv_obj_t* splash_get_root(void);
 // splash_mini_tick(). One mini creature at a time.
 lv_obj_t* splash_mini_create(lv_obj_t *parent, const char *anim_name, int px);
 void splash_mini_tick(void);
+// Switch the mini creature to another animation, fitted to the same px box.
+// Returns false (and keeps the old one) if the name is unknown or the buffer
+// can't grow.
+bool splash_mini_play(const char *anim_name);
+
+// Pin the splash to one named animation, whatever the usage rate says — the
+// host uses it to mirror what Claude Code is doing. NULL or "" hands control
+// back to the rate groups. Takes effect immediately when the splash is up,
+// otherwise on the next splash_show().
+void splash_set_override(const char *anim_name);
 
 // Corner mascot (usage screen, PSRAM boards): the still Clawd idles in the
 // logo slot, does occasional acts, and takes walk-off/lurk/walk-back trips.

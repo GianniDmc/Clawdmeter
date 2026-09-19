@@ -4,8 +4,10 @@
 #include "theme.h"
 #include "idle.h"
 #include "hal/imu_hal.h"
+#include "hal/sound_hal.h"
 #include "hal/board_caps.h"
 #include <Arduino.h>
+#include <Preferences.h>
 
 LV_FONT_DECLARE(font_tiempos_34);
 LV_FONT_DECLARE(font_styrene_28);
@@ -15,33 +17,71 @@ LV_FONT_DECLARE(font_styrene_16);
 // Geometry tuned for the 480x480 panels; everything hangs off these so a
 // smaller board only needs different numbers.
 #define PAD_X      36
-#define TITLE_Y    28
-#define ROW_Y0     96
+#define TOP_Y      24
 #define ROW_STEP   68
 #define ROW_H      56
 #define STEP_W     60      // the - and + buttons
 #define VALUE_W    118
 #define TOGGLE_W   120
+#define SECTION_GAP 28
 
-#define FOCUS_STEP_MIN  5
-#define BREAK_STEP_MIN  1
+#define FOCUS_STEP_MIN   5
+#define BREAK_STEP_MIN   1
+#define LONG_STEP_MIN    5
+#define VOLUME_STEP      10
+
+static const char* const SOUND_NAMES[SOUND_COUNT] = { "Bell", "Chime", "Beep", "Alert" };
+
+static SoundConfig snd = { 60, SOUND_CHIME, true };
 
 static lv_obj_t* root       = nullptr;
-static lv_obj_t* toggle_btn = nullptr;
-static lv_obj_t* toggle_lbl = nullptr;
+static lv_obj_t* pomo_btn   = nullptr;
+static lv_obj_t* pomo_lbl   = nullptr;
+static lv_obj_t* alert_btn  = nullptr;
+static lv_obj_t* alert_lbl  = nullptr;
 static lv_obj_t* focus_val  = nullptr;
 static lv_obj_t* break_val  = nullptr;
+static lv_obj_t* long_val   = nullptr;
+static lv_obj_t* volume_val = nullptr;
+static lv_obj_t* sound_val  = nullptr;
 static lv_obj_t* side_hint  = nullptr;
 static bool      s_open     = false;
 static int8_t    shown_quad = -1;
 static int8_t    shown_fq   = -1;
 
-enum { FIELD_FOCUS = 0, FIELD_BREAK = 1 };
+enum { FIELD_FOCUS, FIELD_BREAK, FIELD_LONG, FIELD_VOLUME, FIELD_SOUND };
 
-static lv_obj_t* make_button(lv_obj_t* parent, int x, int y, int w, int h,
-                             const char* text, const lv_font_t* font,
-                             lv_obj_t** out_label) {
-    lv_obj_t* b = lv_obj_create(parent);
+// ---- Preferences -------------------------------------------------------------
+
+void settings_load(void) {
+    Preferences prefs;
+    prefs.begin("clawdmeter", true);
+    snd.volume        = prefs.getUChar("snd_vol", snd.volume);
+    snd.end_sound     = prefs.getUChar("snd_end", snd.end_sound);
+    snd.claude_alerts = prefs.getUChar("cc_alert", snd.claude_alerts ? 1 : 0) != 0;
+    prefs.end();
+
+    if (snd.volume > 100) snd.volume = 100;
+    if (snd.end_sound >= SOUND_COUNT) snd.end_sound = SOUND_CHIME;
+    sound_hal_set_volume(snd.volume);
+}
+
+static void save_sound(void) {
+    Preferences prefs;
+    prefs.begin("clawdmeter", false);
+    prefs.putUChar("snd_vol", snd.volume);
+    prefs.putUChar("snd_end", snd.end_sound);
+    prefs.putUChar("cc_alert", snd.claude_alerts ? 1 : 0);
+    prefs.end();
+}
+
+const SoundConfig& settings_sound(void) { return snd; }
+
+// ---- Widgets -----------------------------------------------------------------
+
+static lv_obj_t* make_button(int x, int y, int w, int h, const char* text,
+                             const lv_font_t* font, lv_obj_t** out_label) {
+    lv_obj_t* b = lv_obj_create(root);
     lv_obj_set_pos(b, x, y);
     lv_obj_set_size(b, w, h);
     lv_obj_set_style_bg_color(b, THEME_PANEL, 0);
@@ -51,6 +91,8 @@ static lv_obj_t* make_button(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_border_width(b, 0, 0);
     lv_obj_set_style_pad_all(b, 0, 0);
     lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+    // Let a drag that starts on a button scroll the page.
+    lv_obj_add_flag(b, LV_OBJ_FLAG_SCROLL_CHAIN);
 
     lv_obj_t* l = lv_label_create(b);
     lv_obj_set_style_text_font(l, font, 0);
@@ -61,29 +103,45 @@ static lv_obj_t* make_button(lv_obj_t* parent, int x, int y, int w, int h,
     return b;
 }
 
-static lv_obj_t* make_row_label(int y, const char* text) {
+static void make_heading(int y, const char* text) {
+    lv_obj_t* l = lv_label_create(root);
+    lv_obj_set_style_text_font(l, &font_tiempos_34, 0);
+    lv_obj_set_style_text_color(l, THEME_TEXT, 0);
+    lv_label_set_text(l, text);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
+}
+
+static void make_row_label(int y, const char* text) {
     lv_obj_t* l = lv_label_create(root);
     lv_obj_set_style_text_font(l, &font_styrene_28, 0);
     lv_obj_set_style_text_color(l, THEME_TEXT, 0);
     lv_label_set_text(l, text);
-    lv_obj_align(l, LV_ALIGN_TOP_LEFT, PAD_X, y + (ROW_H - 28) / 2 - 2);
-    return l;
+    lv_obj_set_pos(l, PAD_X, y + (ROW_H - 28) / 2 - 2);
+}
+
+static void paint_toggle(lv_obj_t* btn, lv_obj_t* lbl, bool on) {
+    lv_label_set_text(lbl, on ? "ON" : "OFF");
+    lv_obj_set_style_bg_color(btn, on ? THEME_ACCENT : THEME_BAR_BG, 0);
+    lv_obj_set_style_text_color(lbl, on ? THEME_TEXT : THEME_DIM, 0);
 }
 
 static void refresh(void) {
     const PomodoroConfig& c = pomodoro_config();
+    paint_toggle(pomo_btn, pomo_lbl, c.enabled);
+    paint_toggle(alert_btn, alert_lbl, snd.claude_alerts);
 
-    lv_label_set_text(toggle_lbl, c.enabled ? "ON" : "OFF");
-    lv_obj_set_style_bg_color(toggle_btn, c.enabled ? THEME_ACCENT : THEME_BAR_BG, 0);
-    lv_obj_set_style_text_color(toggle_lbl, c.enabled ? THEME_TEXT : THEME_DIM, 0);
-
-    lv_label_set_text_fmt(focus_val, "%u min", c.focus_min);
-    lv_label_set_text_fmt(break_val, "%u min", c.break_min);
+    lv_label_set_text_fmt(focus_val,  "%u min", c.focus_min);
+    lv_label_set_text_fmt(break_val,  "%u min", c.break_min);
+    lv_label_set_text_fmt(long_val,   "%u min", c.long_break_min);
+    lv_label_set_text_fmt(volume_val, "%u%%", snd.volume);
+    lv_label_set_text(sound_val, SOUND_NAMES[snd.end_sound]);
 
     shown_quad = -1;    // force the side hint to repaint
 }
 
-static void toggle_cb(lv_event_t* e) {
+// ---- Callbacks ---------------------------------------------------------------
+
+static void pomo_toggle_cb(lv_event_t* e) {
     (void)e;
     PomodoroConfig c = pomodoro_config();
     c.enabled = !c.enabled;
@@ -91,19 +149,36 @@ static void toggle_cb(lv_event_t* e) {
     refresh();
 }
 
-// user_data packs the field in bit 1 and the direction in bit 0.
+static void alert_toggle_cb(lv_event_t* e) {
+    (void)e;
+    snd.claude_alerts = !snd.claude_alerts;
+    if (snd.claude_alerts) sound_hal_play(SOUND_ALERT);
+    refresh();
+}
+
+// user_data packs the field above bit 0 and the direction in bit 0.
 static void step_cb(lv_event_t* e) {
     const uintptr_t tag = (uintptr_t)lv_event_get_user_data(e);
-    const int  field = (int)(tag >> 1);
-    const int  dir   = (tag & 1) ? +1 : -1;
+    const int field = (int)(tag >> 1);
+    const int dir   = (tag & 1) ? +1 : -1;
 
     PomodoroConfig c = pomodoro_config();
-    if (field == FIELD_FOCUS) {
-        const int v = c.focus_min + dir * FOCUS_STEP_MIN;
-        c.focus_min = pomodoro_clamp_focus(v);
-    } else {
-        const int v = c.break_min + dir * BREAK_STEP_MIN;
-        c.break_min = pomodoro_clamp_break(v);
+    switch (field) {
+    case FIELD_FOCUS: c.focus_min      = pomodoro_clamp_focus(c.focus_min + dir * FOCUS_STEP_MIN); break;
+    case FIELD_BREAK: c.break_min      = pomodoro_clamp_break(c.break_min + dir * BREAK_STEP_MIN); break;
+    case FIELD_LONG:  c.long_break_min = pomodoro_clamp_long(c.long_break_min + dir * LONG_STEP_MIN); break;
+    case FIELD_VOLUME: {
+        const int v = snd.volume + dir * VOLUME_STEP;
+        snd.volume = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+        sound_hal_set_volume(snd.volume);
+        // Only preview on a deliberate tap; a held button would stack plays.
+        if (lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) sound_hal_play(snd.end_sound);
+        break;
+    }
+    case FIELD_SOUND:
+        snd.end_sound = (uint8_t)((snd.end_sound + SOUND_COUNT + dir) % SOUND_COUNT);
+        sound_hal_play(snd.end_sound);
+        break;
     }
     pomodoro_set_config(c);
     refresh();
@@ -122,19 +197,26 @@ static void done_cb(lv_event_t* e) {
     settings_close();
 }
 
-static void make_stepper(int y, int field, lv_obj_t** out_value) {
-    const int right = board_caps().width - PAD_X;
+static void make_stepper(int y, int field, const char* minus_txt, const char* plus_txt,
+                         bool repeat, lv_obj_t** out_value) {
+    const int right   = board_caps().width - PAD_X;
     const int plus_x  = right - STEP_W;
     const int value_x = plus_x - VALUE_W;
     const int minus_x = value_x - STEP_W;
 
-    lv_obj_t* minus = make_button(root, minus_x, y, STEP_W, ROW_H, "-", &font_styrene_28, nullptr);
-    lv_obj_t* plus  = make_button(root, plus_x,  y, STEP_W, ROW_H, "+", &font_styrene_28, nullptr);
-    // Step on the press itself, then keep stepping while held.
-    const lv_event_code_t codes[] = { LV_EVENT_PRESSED, LV_EVENT_LONG_PRESSED_REPEAT };
-    for (lv_event_code_t code : codes) {
-        lv_obj_add_event_cb(minus, step_cb, code, (void*)(uintptr_t)((field << 1) | 0));
-        lv_obj_add_event_cb(plus,  step_cb, code, (void*)(uintptr_t)((field << 1) | 1));
+    lv_obj_t* minus = make_button(minus_x, y, STEP_W, ROW_H, minus_txt, &font_styrene_28, nullptr);
+    lv_obj_t* plus  = make_button(plus_x,  y, STEP_W, ROW_H, plus_txt,  &font_styrene_28, nullptr);
+    // SHORT_CLICKED rather than PRESSED: the page scrolls, and a drag that
+    // happens to start on a button must not change the value. Holding steps
+    // repeatedly.
+    lv_obj_add_event_cb(minus, step_cb, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)((field << 1) | 0));
+    lv_obj_add_event_cb(plus,  step_cb, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)((field << 1) | 1));
+    if (repeat) {
+        const lv_event_code_t codes[] = { LV_EVENT_LONG_PRESSED, LV_EVENT_LONG_PRESSED_REPEAT };
+        for (lv_event_code_t code : codes) {
+            lv_obj_add_event_cb(minus, step_cb, code, (void*)(uintptr_t)((field << 1) | 0));
+            lv_obj_add_event_cb(plus,  step_cb, code, (void*)(uintptr_t)((field << 1) | 1));
+        }
     }
 
     lv_obj_t* v = lv_label_create(root);
@@ -146,9 +228,18 @@ static void make_stepper(int y, int field, lv_obj_t** out_value) {
     *out_value = v;
 }
 
+static lv_obj_t* make_toggle(int y, lv_event_cb_t cb, lv_obj_t** out_label) {
+    lv_obj_t* b = make_button(board_caps().width - PAD_X - TOGGLE_W, y, TOGGLE_W, ROW_H,
+                              "ON", &font_styrene_24, out_label);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_SHORT_CLICKED, NULL);
+    return b;
+}
+
+// ---- Page --------------------------------------------------------------------
+
 void settings_init(lv_obj_t* parent) {
     const BoardCaps& c = board_caps();
-    // Only the Pomodoro lives here, and it needs the IMU.
+    // The Pomodoro needs the IMU, and it is most of what lives here.
     if (!c.has_imu) return;
 
     root = lv_obj_create(parent);
@@ -158,37 +249,45 @@ void settings_init(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(root, 0, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
+    lv_obj_set_style_pad_bottom(root, 28, 0);
     lv_obj_set_style_radius(root, 0, 0);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(root, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_ACTIVE);
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t* title = lv_label_create(root);
-    lv_obj_set_style_text_font(title, &font_tiempos_34, 0);
-    lv_obj_set_style_text_color(title, THEME_TEXT, 0);
-    lv_label_set_text(title, "Pomodoro");
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, TITLE_Y);
-
     const int content_w = c.width - 2 * PAD_X;
-    int y = ROW_Y0;
+    int y = TOP_Y;
+
+    make_heading(y, "Pomodoro");
+    y += 60;
 
     make_row_label(y, "Enabled");
-    toggle_btn = make_button(root, c.width - PAD_X - TOGGLE_W, y, TOGGLE_W, ROW_H,
-                             "ON", &font_styrene_24, &toggle_lbl);
-    lv_obj_add_event_cb(toggle_btn, toggle_cb, LV_EVENT_CLICKED, NULL);
+    pomo_btn = make_toggle(y, pomo_toggle_cb, &pomo_lbl);
     y += ROW_STEP;
 
     make_row_label(y, "Focus");
-    make_stepper(y, FIELD_FOCUS, &focus_val);
+    make_stepper(y, FIELD_FOCUS, "-", "+", true, &focus_val);
     y += ROW_STEP;
 
     make_row_label(y, "Break");
-    make_stepper(y, FIELD_BREAK, &break_val);
-    y += ROW_STEP + 8;
+    make_stepper(y, FIELD_BREAK, "-", "+", true, &break_val);
+    y += ROW_STEP;
 
-    lv_obj_t* side = make_button(root, PAD_X, y, content_w, ROW_H,
+    make_row_label(y, "Long");
+    make_stepper(y, FIELD_LONG, "-", "+", true, &long_val);
+    y += ROW_H + 4;
+
+    lv_obj_t* long_hint = lv_label_create(root);
+    lv_obj_set_style_text_font(long_hint, &font_styrene_16, 0);
+    lv_obj_set_style_text_color(long_hint, THEME_DIM, 0);
+    lv_label_set_text_fmt(long_hint, "Long break after every %d focus blocks", POMODORO_CYCLE);
+    lv_obj_set_pos(long_hint, PAD_X, y);
+    y += 36;
+
+    lv_obj_t* side = make_button(PAD_X, y, content_w, ROW_H,
                                  "Use this side for focus", &font_styrene_24, nullptr);
-    lv_obj_add_event_cb(side, side_cb, LV_EVENT_CLICKED, NULL);
-    y += ROW_H + 12;
+    lv_obj_add_event_cb(side, side_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    y += ROW_H + 10;
 
     side_hint = lv_label_create(root);
     lv_obj_set_width(side_hint, content_w);
@@ -197,12 +296,34 @@ void settings_init(lv_obj_t* parent) {
     lv_obj_set_style_text_color(side_hint, THEME_DIM, 0);
     lv_label_set_text(side_hint, "");
     lv_obj_set_pos(side_hint, PAD_X, y);
+    y += 24 + SECTION_GAP;
 
-    lv_obj_t* done_lbl = nullptr;
-    lv_obj_t* done = make_button(root, (c.width - 200) / 2, c.height - 24 - ROW_H, 200, ROW_H,
-                                 "Done", &font_styrene_24, &done_lbl);
+    make_heading(y, "Sound");
+    y += 60;
+
+    make_row_label(y, "Volume");
+    make_stepper(y, FIELD_VOLUME, "-", "+", false, &volume_val);
+    y += ROW_STEP;
+
+    make_row_label(y, "End");
+    make_stepper(y, FIELD_SOUND, "<", ">", false, &sound_val);
+    y += ROW_STEP;
+
+    make_row_label(y, "Claude");
+    alert_btn = make_toggle(y, alert_toggle_cb, &alert_lbl);
+    y += ROW_H + 4;
+
+    lv_obj_t* alert_hint = lv_label_create(root);
+    lv_obj_set_style_text_font(alert_hint, &font_styrene_16, 0);
+    lv_obj_set_style_text_color(alert_hint, THEME_DIM, 0);
+    lv_label_set_text(alert_hint, "Sound when Claude Code needs you or is done");
+    lv_obj_set_pos(alert_hint, PAD_X, y);
+    y += 24 + SECTION_GAP;
+
+    lv_obj_t* done = make_button((c.width - 200) / 2, y, 200, ROW_H,
+                                 "Done", &font_styrene_24, nullptr);
     lv_obj_set_style_bg_color(done, THEME_ACCENT, 0);
-    lv_obj_add_event_cb(done, done_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(done, done_cb, LV_EVENT_SHORT_CLICKED, NULL);
 }
 
 void settings_tick(void) {
@@ -225,6 +346,7 @@ void settings_open(void) {
     if (!root || s_open) return;
     pomodoro_set_suspended(true);
     refresh();
+    lv_obj_scroll_to_y(root, 0, LV_ANIM_OFF);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(root);
     s_open = true;
@@ -235,6 +357,7 @@ void settings_open(void) {
 void settings_close(void) {
     if (!s_open) return;
     pomodoro_save_config();
+    save_sound();
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
     s_open = false;
     pomodoro_set_suspended(false);
@@ -243,3 +366,7 @@ void settings_close(void) {
 }
 
 bool settings_is_open(void) { return s_open; }
+
+void settings_scroll_to(int y) {
+    if (root) lv_obj_scroll_to_y(root, y, LV_ANIM_OFF);
+}

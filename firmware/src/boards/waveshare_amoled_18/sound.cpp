@@ -32,6 +32,8 @@ void sound_hal_init(void) {
 }
 
 void sound_hal_play_reset(void) { chime_play(); }
+void sound_hal_play(uint8_t sound)       { chime_play_sound(sound); }
+void sound_hal_set_volume(uint8_t volume) { chime_set_volume(volume); }
 void sound_hal_tick(void)       { chime_tick(); }
 
 #endif  // BOARD_HAS_SOUND

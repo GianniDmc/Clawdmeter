@@ -15,12 +15,17 @@ struct PomodoroConfig {
     uint8_t focus_min;
     uint8_t break_min;
     uint8_t focus_quad;     // 0..3 from imu_hal_rotation_quadrant(); break is opposite
+    uint8_t long_break_min; // replaces the break after every POMODORO_CYCLE focus blocks
 };
+
+#define POMODORO_CYCLE           4
 
 #define POMODORO_FOCUS_MIN_MIN   5
 #define POMODORO_FOCUS_MIN_MAX   120
 #define POMODORO_BREAK_MIN_MIN   1
 #define POMODORO_BREAK_MIN_MAX   60
+#define POMODORO_LONG_MIN_MIN    5
+#define POMODORO_LONG_MIN_MAX    60
 
 static inline uint8_t pomodoro_clamp_focus(int v) {
     return (uint8_t)(v < POMODORO_FOCUS_MIN_MIN ? POMODORO_FOCUS_MIN_MIN
@@ -29,6 +34,10 @@ static inline uint8_t pomodoro_clamp_focus(int v) {
 static inline uint8_t pomodoro_clamp_break(int v) {
     return (uint8_t)(v < POMODORO_BREAK_MIN_MIN ? POMODORO_BREAK_MIN_MIN
                    : v > POMODORO_BREAK_MIN_MAX ? POMODORO_BREAK_MIN_MAX : v);
+}
+static inline uint8_t pomodoro_clamp_long(int v) {
+    return (uint8_t)(v < POMODORO_LONG_MIN_MIN ? POMODORO_LONG_MIN_MIN
+                   : v > POMODORO_LONG_MIN_MAX ? POMODORO_LONG_MIN_MAX : v);
 }
 
 // Loads the saved config from NVS and builds the (hidden) overlay.
@@ -54,6 +63,10 @@ void pomodoro_restart(void);
 const PomodoroConfig& pomodoro_config(void);
 void pomodoro_set_config(const PomodoroConfig& cfg);
 void pomodoro_save_config(void);
+
+// Claude Code is waiting for the user: the timer screen says so, since it
+// covers the splash that would otherwise show it.
+void pomodoro_set_claude_waiting(bool waiting);
 
 // While suspended the overlay never shows, whatever the orientation — the
 // settings page needs the device on its side without a block starting.

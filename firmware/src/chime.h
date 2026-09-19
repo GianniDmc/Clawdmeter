@@ -29,5 +29,13 @@ bool chime_init(const ChimeConfig& cfg);
 // or already playing.
 void chime_play(void);
 
+// Queue one playback of a sound by id (see SOUND_* in hal/sound_hal.h): the
+// embedded bell, or a short tone pattern synthesized on the fly — no extra
+// PCM in flash. Same non-blocking, drop-if-busy behaviour as chime_play().
+void chime_play_sound(uint8_t id);
+
+// Codec output volume, 0..100. Applies to the next playback.
+void chime_set_volume(uint8_t volume);
+
 // Currently a no-op (playback runs in its own task); kept for HAL symmetry.
 void chime_tick(void);

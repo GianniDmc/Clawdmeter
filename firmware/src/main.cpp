@@ -11,6 +11,7 @@
 #include "charge_anim.h"
 #include "pomodoro.h"
 #include "settings.h"
+#include "claude_state.h"
 #include "usage_rate.h"
 #include "idle.h"
 #include "idle_cfg.h"
@@ -120,6 +121,7 @@ static bool parse_json(const char* json, UsageData* out) {
     out->time_pct = doc["tp"] | 0;
     out->period_days = doc["pd"] | 30;
     strlcpy(out->reset_date, doc["rd"] | "", sizeof(out->reset_date));
+    strlcpy(out->cc, doc["cc"] | "", sizeof(out->cc));
     out->clock_epoch = doc["t"] | 0L;
     out->clock_fmt = doc["tf"] | 24;
     out->ok = doc["ok"] | false;
@@ -210,6 +212,7 @@ void setup() {
     power_hal_init();
     imu_hal_init();
     sound_hal_init();
+    settings_load();    // sound prefs (volume) need the codec up
     touch_hal_init();
 
     // ---- LVGL ----
@@ -418,6 +421,7 @@ void loop() {
                 if (splash_is_active()) splash_pick_for_current_rate();
             }
             ui_update(&usage);
+            claude_state_update(usage.cc);
             ble_send_ack();
         } else {
             ble_send_nack();

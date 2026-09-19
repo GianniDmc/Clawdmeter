@@ -222,6 +222,7 @@ static lv_obj_t* lbl_anim;      // status line: connection state + whimsical idl
 
 // ---- Battery indicator (shared, on top) ----
 static lv_obj_t* battery_img;
+static lv_obj_t* battery_pct_lbl;   // "87%" to the left of the icon
 static lv_obj_t* logo_img;
 static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
@@ -590,11 +591,19 @@ void ui_init(void) {
     battery_img = lv_image_create(scr);
     lv_image_set_src(battery_img, &battery_dscs[0]);
     lv_obj_set_pos(battery_img, L.scr_w - L.batt_w - L.margin, L.batt_y);
+
+    battery_pct_lbl = lv_label_create(scr);
+    lv_obj_set_style_text_font(battery_pct_lbl, L.small_icons ? &font_styrene_12 : &font_styrene_20, 0);
+    lv_obj_set_style_text_color(battery_pct_lbl, COL_DIM, 0);
+    lv_label_set_text(battery_pct_lbl, "");
+    lv_obj_align_to(battery_pct_lbl, battery_img, LV_ALIGN_OUT_LEFT_MID, L.small_icons ? -3 : -6, 0);
     // Boards without battery telemetry never show the indicator (per the HAL
     // contract; previously every board drew the empty-battery glyph).
     if (!board_caps().has_battery) {
         lv_obj_del(battery_img);
         battery_img = nullptr;
+        lv_obj_del(battery_pct_lbl);
+        battery_pct_lbl = nullptr;
     }
 
     pomodoro_init(scr);
@@ -776,8 +785,13 @@ void ui_tick_anim(void) {
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
 static void apply_battery_visibility(void) {
     if (!battery_img) return;
-    if (current_screen == SCREEN_SPLASH) lv_obj_add_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
-    else                                  lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
+    if (current_screen == SCREEN_SPLASH) {
+        lv_obj_add_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(battery_pct_lbl, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(battery_pct_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void long_press_cb(lv_event_t* e) {
@@ -849,5 +863,9 @@ void ui_update_battery(int percent, bool charging) {
         idx = 3;
     }
     lv_image_set_src(battery_img, &battery_dscs[idx]);
+    // No number while the PMU hasn't produced a reading yet.
+    if (percent >= 0) lv_label_set_text_fmt(battery_pct_lbl, "%d%%", percent);
+    else              lv_label_set_text(battery_pct_lbl, "");
+    lv_obj_align_to(battery_pct_lbl, battery_img, LV_ALIGN_OUT_LEFT_MID, L.small_icons ? -3 : -6, 0);
     apply_battery_visibility();
 }

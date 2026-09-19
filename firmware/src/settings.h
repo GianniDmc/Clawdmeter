@@ -1,16 +1,34 @@
 #pragma once
 #include <lvgl.h>
+#include <stdint.h>
 
-// Settings page, opened by a long press on any screen. Today it only holds the
-// Pomodoro: on/off, focus and break lengths, and which side is focus.
+// Settings page, opened by a long press on any screen: the Pomodoro (on/off,
+// lengths, focus side) and sound (volume, end sound, Claude alerts). It
+// scrolls; Done or PWR closes it.
 //
 // Edits apply live and are written to NVS once, on close.
+
+// Sound settings live here rather than in the sound HAL: they are user
+// preferences, and every board with a speaker shares them.
+struct SoundConfig {
+    uint8_t volume;          // 0..100, 0 = silent
+    uint8_t end_sound;       // SOUND_* played when a Pomodoro block ends
+    bool    claude_alerts;   // sound when Claude Code needs you / finishes
+};
+
+// Loads saved preferences and applies the volume. Runs on every board, before
+// the page itself is built (which only happens on boards with an IMU).
+void settings_load(void);
+const SoundConfig& settings_sound(void);
 
 void settings_init(lv_obj_t* parent);
 void settings_tick(void);
 
 void settings_open(void);
 void settings_close(void);
+
+// Scroll the page to y px (the simulator uses it to screenshot the lower half).
+void settings_scroll_to(int y);
 
 // splash_tick() stands still while this is up, like for the other overlays.
 bool settings_is_open(void);
