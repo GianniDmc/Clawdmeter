@@ -1,0 +1,12 @@
+{
+  "_comment": "GitHub Copilot AI-credit rates, USD per 1M tokens (1 AI credit = $0.01). Source: docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing. rates = [input, cached input, cache write, output]; long_rates apply when the request's context (input + cached + cache write) exceeds long_threshold. promos scale a model's credits by factor before 'until' (UTC). Models missing here fall back to OpenCode's own dollar cost.",
+  "models": {
+    "gpt-5.6-sol":      { "rates": [4.00, 0.40, 5.00, 20.00], "long_threshold": 272000, "long_rates": [8.00, 0.80, 10.00, 30.00] },
+    "gpt-5.6-luna":     { "rates": [0.20, 0.02, 0.25, 1.20],  "long_threshold": 200000, "long_rates": [0.40, 0.04, 0.50, 1.80] },
+    "claude-sonnet-5":  { "rates": [2.00, 0.20, 2.50, 10.00] },
+    "gemini-3.8-flash": { "rates": [0.75, 0.075, 0.75, 3.75] }
+  },
+  "promos": [
+    { "model": "gpt-5.6-sol", "until": "2026-09-04T00:00:00Z", "factor": 0.5 }
+  ]
+}

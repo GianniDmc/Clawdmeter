@@ -7,11 +7,14 @@ Nothing here touches the network or any credential:
   the latest numbers; a window whose reset time has passed is back at 0 %.
 * GitHub Copilot has no limit worth watching on a company seat, so the device
   shows AI credits used today and since the 1st — the unit GitHub's own usage
-  page reports. OpenCode (and OpenChamber, which drives it) stores a dollar
-  cost per reply; one AI credit is one cent, which matches GitHub's figure
-  once its report catches up (it lags by a few hours). The Copilot app/CLI
-  records nano-credits per request directly. Prompts sent come along as a
-  secondary count.
+  page reports (1 credit = $0.01). OpenCode (and OpenChamber, which drives
+  it) records every reply's tokens by type; they are priced with GitHub's
+  published per-model rates in copilot_rates.json, including long-context
+  tiers and promotions. OpenCode's own dollar cost uses list prices with no
+  promotions — 6 % over GitHub in September 2026, when GPT-5.6 Sol was half
+  price until the 3rd — so it is only the fallback for models missing from
+  the table. The Copilot app/CLI records nano-credits per request directly.
+  Prompts sent come along as a secondary count.
 
 Each reader returns None when its tool isn't installed or has nothing yet.
 """
@@ -24,6 +27,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+RATES_FILE = Path(__file__).with_name("copilot_rates.json")
 CODEX_DIR = Path.home() / ".codex"
 OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 COPILOT_CLI_DB = Path.home() / ".copilot" / "session-store.db"
@@ -118,6 +122,31 @@ def _connect_ro(db: Path) -> sqlite3.Connection | None:
         return None
 
 
+def load_rates(path: Path = RATES_FILE) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {"models": {}, "promos": []}
+
+
+def reply_credits(rates: dict, model: str, ts_ms: int, i: int, cr: int, cw: int, o: int,
+                  fallback_usd: float) -> float:
+    """AI credits for one reply, from its tokens and GitHub's rate for the model."""
+    spec = rates.get("models", {}).get(model)
+    if not spec:
+        return fallback_usd * 100
+    r = spec["rates"]
+    thr = spec.get("long_threshold")
+    if thr and i + cr + cw > thr:
+        r = spec["long_rates"]
+    credits = (i * r[0] + cr * r[1] + cw * r[2] + o * r[3]) / 1e6 * 100
+    when = dt.datetime.fromtimestamp(ts_ms / 1000, dt.timezone.utc)
+    for promo in rates.get("promos", []):
+        if promo.get("model") == model and when < dt.datetime.fromisoformat(promo["until"].replace("Z", "+00:00")):
+            credits *= promo.get("factor", 1.0)
+    return credits
+
+
 def _opencode_days(db: Path, since_ms: int) -> dict[str, list[float]]:
     """{local YYYY-MM-DD: [prompts, credits]} for Copilot traffic in OpenCode."""
     out: dict[str, list[float]] = {}
@@ -134,15 +163,20 @@ def _opencode_days(db: Path, since_ms: int) -> dict[str, list[float]]:
               AND json_extract(m.data, '$.model.providerID') = 'github-copilot'
             GROUP BY 1
             """, (since_ms,)).fetchall()
-        credits = con.execute(
+        replies = con.execute(
             """
-            SELECT date(time_created / 1000, 'unixepoch', 'localtime'),
-                   sum(coalesce(json_extract(data, '$.cost'), 0)) * 100
+            SELECT date(time_created / 1000, 'unixepoch', 'localtime'), time_created,
+                   json_extract(data, '$.modelID'),
+                   coalesce(json_extract(data, '$.tokens.input'), 0),
+                   coalesce(json_extract(data, '$.tokens.cache.read'), 0),
+                   coalesce(json_extract(data, '$.tokens.cache.write'), 0),
+                   coalesce(json_extract(data, '$.tokens.output'), 0)
+                     + coalesce(json_extract(data, '$.tokens.reasoning'), 0),
+                   coalesce(json_extract(data, '$.cost'), 0)
             FROM message
             WHERE time_created >= ?
               AND json_extract(data, '$.role') = 'assistant'
               AND json_extract(data, '$.providerID') = 'github-copilot'
-            GROUP BY 1
             """, (since_ms,)).fetchall()
     except sqlite3.Error:
         return out
@@ -150,8 +184,10 @@ def _opencode_days(db: Path, since_ms: int) -> dict[str, list[float]]:
         con.close()
     for day, n in prompts:
         out.setdefault(day, [0, 0.0])[0] += int(n or 0)
-    for day, c in credits:
-        out.setdefault(day, [0, 0.0])[1] += float(c or 0)
+    rates = load_rates()
+    for day, ts, model, i, cr, cw, o, usd in replies:
+        out.setdefault(day, [0, 0.0])[1] += reply_credits(
+            rates, model or "", int(ts), int(i), int(cr), int(cw), int(o), float(usd or 0))
     return out
 
 

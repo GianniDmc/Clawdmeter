@@ -7,6 +7,8 @@ import datetime as dt
 import json
 import sqlite3
 
+import pytest
+
 from daemon.tool_usage import read_codex, read_copilot
 
 
@@ -48,7 +50,8 @@ def test_copilot_counts_prompts_and_tokens_by_local_day(tmp_path):
     now = dt.datetime(2026, 9, 3, 15, 0).timestamp()
     ms = lambda d, h: int(dt.datetime(2026, 9, d, h).timestamp() * 1000)
     user = {"role": "user", "model": {"providerID": "github-copilot"}}
-    reply = {"role": "assistant", "providerID": "github-copilot", "cost": 0.5}      # 50 credits
+    # A model missing from the rate table falls back to OpenCode's cost: 50 credits.
+    reply = {"role": "assistant", "providerID": "github-copilot", "modelID": "unlisted", "cost": 0.5}
     _opencode_db(tmp_path / "oc.db", [
         ("s", ms(1, 10), user), ("s", ms(1, 10), reply),
         ("s", ms(3, 9), user), ("s", ms(3, 9), reply), ("s", ms(3, 9), reply),
@@ -63,3 +66,19 @@ def test_copilot_counts_prompts_and_tokens_by_local_day(tmp_path):
 
 def test_copilot_absent_is_none(tmp_path):
     assert read_copilot(tmp_path / "a.db", tmp_path / "b.db") is None
+
+
+def test_reply_credits_use_github_rates_tiers_and_promos():
+    from daemon.tool_usage import reply_credits
+    rates = {"models": {"m": {"rates": [4.0, 0.4, 5.0, 20.0], "long_threshold": 1000,
+                              "long_rates": [8.0, 0.8, 10.0, 30.0]}},
+             "promos": [{"model": "m", "until": "2026-09-04T00:00:00Z", "factor": 0.5}]}
+    after = int(dt.datetime(2026, 9, 10, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    before = int(dt.datetime(2026, 9, 2, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    # 500 input + 100 output tokens, short context: (500*4 + 100*20) / 1e6 $ = 0.4 credits
+    assert reply_credits(rates, "m", after, 500, 0, 0, 100, 9.9) == pytest.approx(0.4)
+    assert reply_credits(rates, "m", before, 500, 0, 0, 100, 9.9) == pytest.approx(0.2)
+    # past the threshold: long-context rates
+    assert reply_credits(rates, "m", after, 2000, 0, 0, 0, 9.9) == pytest.approx(1.6)
+    # unknown model: OpenCode's dollar cost
+    assert reply_credits(rates, "other", after, 1, 1, 1, 1, 0.07) == pytest.approx(7.0)
