@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <stdlib.h>
 #include "../../settings.h"
+#include "../../ui.h"
+#include <lvgl.h>
 
 static bool quit = false;
 
@@ -73,6 +75,25 @@ void sim_pump(void) {
         settings_armed = false;
         settings_open();
         settings_show_tab(atoi(settings_env));
+    }
+
+    // Report LVGL's pool once the UI is built: running out of it crashes
+    // inside the renderer, far from the widget that tipped it over.
+    static bool mem_reported = false;
+    if (!mem_reported && millis() >= 1000) {
+        mem_reported = true;
+        lv_mem_monitor_t mon;
+        lv_mem_monitor(&mon);
+        printf("[sim] LVGL pool: %u%% used, %u bytes free, biggest free block %u\n",
+               (unsigned)mon.used_pct, (unsigned)mon.free_size, (unsigned)mon.free_biggest_size);
+    }
+
+    // SIM_SCREEN=<n> shows screen n (see screen_t) once the UI is up.
+    static const char* screen_env = getenv("SIM_SCREEN");
+    static bool screen_armed = screen_env != nullptr;
+    if (screen_armed && millis() >= 1200) {
+        screen_armed = false;
+        ui_show_screen((screen_t)atoi(screen_env));
     }
 
     // Headless CI hook: SIM_AUTOSHOT_MS=<ms> → screenshot + exit.

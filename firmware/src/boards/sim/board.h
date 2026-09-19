@@ -26,7 +26,8 @@
 // Headless / CI: SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=<ms> saves a
 // screenshot (SIM_AUTOSHOT_PATH, default sim-autoshot.bmp) after <ms> and
 // exits. SIM_QUADRANT=<0..3> sets the starting orientation, SIM_SETTINGS=1
-// opens the settings page at boot.
+// opens the settings page at boot, SIM_SCREEN=<n> jumps to screen n
+// (0 splash, 1 Claude, 2 Codex, 3 Copilot).
 
 #define BOARD_NAME  "Simulator 480x480"
 #define LCD_WIDTH   480

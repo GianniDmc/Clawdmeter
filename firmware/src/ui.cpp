@@ -3,6 +3,7 @@
 #include "charge_anim.h"
 #include "pomodoro.h"
 #include "settings.h"
+#include "tool_screens.h"
 #include <lvgl.h>
 #include <time.h>
 #include "logo.h"
@@ -318,6 +319,7 @@ static void format_reset_time(int mins, char* buf, size_t len) {
 // Forward decls — callbacks defined near ui_show_screen below
 static void global_click_cb(lv_event_t* e);
 static void long_press_cb(lv_event_t* e);
+static screen_t prev_non_splash_screen = SCREEN_USAGE;
 
 static lv_obj_t* make_panel(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_t* panel = lv_obj_create(parent);
@@ -565,6 +567,8 @@ void ui_init(void) {
     init_battery_icons();
 
     init_usage_screen(scr);
+    // Before the corner logo and battery, so those stay on top of the pages.
+    tool_screens_init(scr, global_click_cb, long_press_cb);
     splash_init(scr);
 
     if (splash_get_root()) {
@@ -782,7 +786,6 @@ void ui_tick_anim(void) {
     lv_label_set_text(lbl_anim, buf);
 }
 
-static screen_t prev_non_splash_screen = SCREEN_USAGE;
 static void apply_battery_visibility(void) {
     if (!battery_img) return;
     if (current_screen == SCREEN_SPLASH) {
@@ -802,8 +805,7 @@ static void long_press_cb(lv_event_t* e) {
 static void global_click_cb(lv_event_t* e) {
     (void)e;
     if (settings_is_open()) return;
-    if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
-    else                                  ui_show_screen(SCREEN_SPLASH);
+    ui_next_screen();
 }
 
 void ui_show_screen(screen_t screen) {
@@ -815,11 +817,13 @@ void ui_show_screen(screen_t screen) {
     case SCREEN_USAGE:   lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
+    tool_screens_show(screen);
 
-    splash_mascot_set_visible(screen != SCREEN_SPLASH);
+    // The corner Clawd belongs to the Claude page only.
+    splash_mascot_set_visible(screen == SCREEN_USAGE);
     if (logo_img) {
-        if (screen == SCREEN_SPLASH) lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
-        else                          lv_obj_clear_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
+        if (screen == SCREEN_USAGE) lv_obj_clear_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
+        else                        lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
     }
 
     if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;
@@ -830,6 +834,10 @@ void ui_show_screen(screen_t screen) {
 void ui_toggle_splash(void) {
     if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
     else                                  ui_show_screen(SCREEN_SPLASH);
+}
+
+void ui_next_screen(void) {
+    ui_show_screen((screen_t)((current_screen + 1) % SCREEN_COUNT));
 }
 
 screen_t ui_get_current_screen(void) {

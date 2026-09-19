@@ -91,3 +91,14 @@ def test_garbage_files_are_skipped(tmp_path):
     (tmp_path / "odd.json").write_text('{"state": "dancing", "ts": 1}')
     record(ev("Stop"), tmp_path, now=10.0)
     assert read_claude_state(tmp_path, now=11.0) == "done"
+
+
+# ---------------------------------------------------------------------------
+# Codex source
+# ---------------------------------------------------------------------------
+
+def test_codex_permission_request_waits_and_interrupt_clears(tmp_path):
+    record(ev("PermissionRequest"), tmp_path, now=5.0)
+    assert read_claude_state(tmp_path, now=6.0) == "wait"
+    record(ev("Interrupt"), tmp_path)
+    assert read_claude_state(tmp_path, now=6.0) == ""

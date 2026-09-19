@@ -24,6 +24,11 @@ import httpx
 from bleak import BleakClient
 from bleak.exc import BleakError
 
+try:        # run as `python -m daemon.claude_usage_daemon` (tests) or as a script
+    from daemon.tool_usage import read_codex, read_copilot
+except ImportError:
+    from tool_usage import read_codex, read_copilot
+
 DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
@@ -449,6 +454,26 @@ def read_claude_state(state_dir: Path | None = None, now: float | None = None) -
     return ""
 
 
+def other_tool_payloads(codex_state: str) -> list[dict]:
+    """The Codex and Copilot messages, each small enough for one BLE write.
+
+    Tagged with "k" so the firmware routes them away from the Claude usage
+    parser. Codex goes even without numbers, so its live state still shows.
+    """
+    out: list[dict] = []
+    codex = read_codex() or {}
+    if codex or codex_state:
+        msg = {"k": "cx", **codex}
+        if codex_state:
+            msg["st"] = codex_state
+        out.append(msg)
+    copilot = read_copilot()
+    if copilot:
+        out.append({"k": "cp", **copilot["summary"]})
+        out.append({"k": "cpg", **copilot["grid"]})
+    return out
+
+
 async def poll_api(token: str) -> dict | None:
     headers = dict(API_HEADERS_TEMPLATE)
     headers["Authorization"] = f"Bearer {token}"
@@ -800,6 +825,7 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
     used_successfully = False
     last_payload: dict | None = None   # last usage payload, re-sent with a new "cc"
     last_cc = ""
+    last_cx = ""                        # Codex state last sent
     try:
         while client.is_connected and not stop_event.is_set():
             now = time.time()
@@ -814,6 +840,13 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     payload["cc"] = cc
                 if await session.write_payload(payload):
                     last_cc = cc
+
+            cx = read_claude_state(CLAUDE_STATE_DIR / "codex")
+            if cx != last_cx and last_payload is not None:
+                for msg in other_tool_payloads(cx):
+                    if msg["k"] == "cx":
+                        await session.write_payload(msg)
+                last_cx = cx
 
             if session.refresh_requested.is_set() or elapsed >= POLL_INTERVAL:
                 session.refresh_requested.clear()
@@ -834,6 +867,9 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                         last_poll = time.time()
                         last_cc = cc
                         used_successfully = True
+                        last_cx = read_claude_state(CLAUDE_STATE_DIR / "codex")
+                        for msg in other_tool_payloads(last_cx):
+                            await session.write_payload(msg)
                 elif dead:
                     # No live token in any config dir (missing, or a 401/expired
                     # token) -> show "No data" now instead of stale numbers. Guard

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Claude Code hook: record what this session is doing, for the Clawdmeter.
+"""Claude Code / Codex hook: record what this session is doing, for the Clawdmeter.
+
+    claude_state_hook.py            Claude Code (the default)
+    claude_state_hook.py codex      Codex — same JSON on stdin, separate state
 
 Registered for several hook events in ~/.claude/settings.json (see
 daemon/claude-hooks.example.json). Claude Code pipes the event as JSON on
@@ -25,6 +28,8 @@ import time
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".config" / "claude-usage-monitor" / "claude-state"
+# Other tools keep their sessions in a subdirectory, so each gets its own state.
+SOURCES = {"claude": STATE_DIR, "codex": STATE_DIR / "codex"}
 
 # Tools whose whole point is to hand the turn to the user.
 ASKS_USER = {"AskUserQuestion", "ExitPlanMode"}
@@ -41,9 +46,10 @@ def state_for(event: dict) -> str | None:
         return "wait"
     if name in WORK_EVENTS:
         return "work"
-    # Registered only with the matchers that mean "the user must act"
-    # (permission_prompt, elicitation_dialog, agent_needs_input).
-    if name == "Notification":
+    # Claude Code: registered only with the matchers that mean "the user must
+    # act" (permission_prompt, elicitation_dialog, agent_needs_input).
+    # Codex: PermissionRequest is its approval prompt.
+    if name in ("Notification", "PermissionRequest"):
         return "wait"
     if name in DONE_EVENTS:
         return "done"
@@ -60,7 +66,8 @@ def record(event: dict, state_dir: Path = STATE_DIR, now: float | None = None) -
         return
     path = state_dir / f"{session}.json"
 
-    if event.get("hook_event_name") == "SessionEnd":
+    # Codex's Interrupt: the user stopped the turn, nothing is going on.
+    if event.get("hook_event_name") in ("SessionEnd", "Interrupt"):
         path.unlink(missing_ok=True)
         return
 
@@ -78,8 +85,9 @@ def record(event: dict, state_dir: Path = STATE_DIR, now: float | None = None) -
 
 
 def main() -> int:
+    source = sys.argv[1] if len(sys.argv) > 1 else "claude"
     try:
-        record(json.load(sys.stdin))
+        record(json.load(sys.stdin), SOURCES.get(source, STATE_DIR))
     except Exception:
         pass    # a status light must never get in Claude Code's way
     return 0

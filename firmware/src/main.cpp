@@ -12,6 +12,7 @@
 #include "pomodoro.h"
 #include "settings.h"
 #include "claude_state.h"
+#include "tool_screens.h"
 #include "usage_rate.h"
 #include "idle.h"
 #include "idle_cfg.h"
@@ -106,6 +107,47 @@ static void my_touch_cb(lv_indev_t* indev, lv_indev_data_t* data) {
 }
 
 // Parse a JSON line into UsageData.
+// Messages tagged with "k" carry the other tools' data (daemon/tool_usage.py)
+// and never touch the Claude usage. Returns true when the message was one.
+static bool parse_tool_message(const char* json) {
+    JsonDocument doc;
+    if (deserializeJson(doc, json)) return false;
+    const char* k = doc["k"] | (const char*)nullptr;
+    if (!k) return false;
+
+    if (strcmp(k, "cx") == 0) {
+        CodexData d = {};
+        d.has_limits = doc["p"].is<int>();
+        d.p  = doc["p"]  | 0;
+        d.pr = doc["pr"] | -1;
+        d.w  = doc["w"]  | 0;
+        d.wr = doc["wr"] | -1;
+        strlcpy(d.st, doc["st"] | "", sizeof(d.st));
+        tool_screens_codex(d);
+    } else if (strcmp(k, "cp") == 0) {
+        CopilotData d = {};
+        d.td   = doc["td"] | 0;
+        d.md   = doc["md"] | 0;
+        d.tt_k = doc["tt"] | 0UL;
+        d.mt_k = doc["mt"] | 0UL;
+        tool_screens_copilot(d);
+    } else if (strcmp(k, "cpg") == 0) {
+        CopilotGrid g = {};
+        g.month         = doc["mo"]  | 0;
+        g.first_wd      = doc["wd"]  | 0;
+        g.days_in_month = doc["dim"] | 0;
+        JsonArray days = doc["d"].as<JsonArray>();
+        for (JsonVariant v : days) {
+            if (g.n >= COPILOT_MAX_DAYS) break;
+            g.d[g.n++] = v.as<uint16_t>();
+        }
+        if (g.days_in_month > COPILOT_MAX_DAYS) g.days_in_month = COPILOT_MAX_DAYS;
+        if (g.first_wd > 6) g.first_wd = 0;
+        tool_screens_copilot_grid(g);
+    }
+    return true;
+}
+
 static bool parse_json(const char* json, UsageData* out) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
@@ -310,6 +352,7 @@ void loop() {
     sound_hal_tick();
     pomodoro_tick();
     settings_tick();
+    tool_screens_tick();
     splash_tick();
     splash_mascot_tick();
     // Rotation transition (blank + ramp) would fight the idle fade — skip
@@ -348,7 +391,7 @@ void loop() {
                 } else if (pomodoro_is_active()) {
                     pomodoro_restart();
                 } else {
-                    ui_toggle_splash();
+                    ui_next_screen();
                 }
             } else {
                 if (primary_wake_swallowed) primary_wake_swallowed = false;
@@ -432,7 +475,9 @@ void loop() {
     check_serial_cmd();
 
     if (ble_has_data()) {
-        if (parse_json(ble_get_data(), &usage)) {
+        if (parse_tool_message(ble_get_data())) {
+            ble_send_ack();
+        } else if (parse_json(ble_get_data(), &usage)) {
             int g_before = usage_rate_group();
             bool session_reset = usage_rate_sample(usage.session_pct);
             int g_after = usage_rate_group();

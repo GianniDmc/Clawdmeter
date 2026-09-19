@@ -67,6 +67,7 @@ void pomodoro_save_config(void);
 // Claude Code is waiting for the user: the timer screen says so, since it
 // covers the splash that would otherwise show it.
 void pomodoro_set_claude_waiting(bool waiting);
+void pomodoro_set_codex_waiting(bool waiting);
 
 // While suspended the overlay never shows, whatever the orientation — the
 // settings page needs the device on its side without a block starting.
