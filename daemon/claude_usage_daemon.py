@@ -30,7 +30,10 @@ RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
 REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
 
 POLL_INTERVAL = 60
-TICK = 5
+# How often the loop wakes. Short, because Claude Code state changes (field
+# "cc") should reach the device within a second; a wake-up only lists a
+# directory, the API is still polled every POLL_INTERVAL.
+TICK = 0.5
 CONNECT_TIMEOUT = 20.0
 
 # macOS: token lives in Keychain (service "Claude Code-credentials").
@@ -38,6 +41,8 @@ CONNECT_TIMEOUT = 20.0
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 DEFAULT_CONFIG_DIR = Path.home() / ".claude"
 SAVED_ADDR_FILE = Path.home() / ".config" / "claude-usage-monitor" / "ble-address"
+# Written by claude_state_hook.py, one <session_id>.json per Claude Code session.
+CLAUDE_STATE_DIR = Path.home() / ".config" / "claude-usage-monitor" / "claude-state"
 CONFIG_FILE = Path.home() / ".config" / "claude-usage-monitor" / "config"
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -404,6 +409,46 @@ def add_clock_fields(payload: dict) -> None:
     payload["tf"] = tf
 
 
+# ---------------------------------------------------------------------------
+# Claude Code state (hooks -> files -> "cc" field)
+# ---------------------------------------------------------------------------
+
+# A state older than this no longer counts: a session that crashed or was
+# killed never sends its Stop/SessionEnd, and "done" is only news for a moment.
+CLAUDE_STATE_TTL = {"wait": 30 * 60, "work": 15 * 60, "done": 45}
+# Several sessions at once: show the one that matters most.
+CLAUDE_STATE_PRIORITY = ("wait", "work", "done")
+
+
+def read_claude_state(state_dir: Path | None = None, now: float | None = None) -> str:
+    """Fold every session's hook state into one: "wait" > "work" > "done" > ""."""
+    state_dir = CLAUDE_STATE_DIR if state_dir is None else state_dir
+    now = time.time() if now is None else now
+    live: set[str] = set()
+    try:
+        files = list(state_dir.glob("*.json"))
+    except OSError:
+        return ""
+    for f in files:
+        try:
+            entry = json.loads(f.read_text())
+            state, ts = entry["state"], float(entry["ts"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        ttl = CLAUDE_STATE_TTL.get(state)
+        if ttl is None:
+            continue
+        if now - ts <= ttl:
+            live.add(state)
+        elif now - ts > 24 * 3600:
+            # Leftover from a session that never ended cleanly.
+            f.unlink(missing_ok=True)
+    for state in CLAUDE_STATE_PRIORITY:
+        if state in live:
+            return state
+    return ""
+
+
 async def poll_api(token: str) -> dict | None:
     headers = dict(API_HEADERS_TEMPLATE)
     headers["Authorization"] = f"Bearer {token}"
@@ -753,10 +798,23 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
 
     last_poll = 0.0
     used_successfully = False
+    last_payload: dict | None = None   # last usage payload, re-sent with a new "cc"
+    last_cc = ""
     try:
         while client.is_connected and not stop_event.is_set():
             now = time.time()
             elapsed = now - last_poll
+
+            # Claude Code state changed since the last write: push it now
+            # rather than at the next poll, on top of the numbers we have.
+            cc = read_claude_state()
+            if cc != last_cc and last_payload is not None:
+                payload = dict(last_payload)
+                if cc:
+                    payload["cc"] = cc
+                if await session.write_payload(payload):
+                    last_cc = cc
+
             if session.refresh_requested.is_set() or elapsed >= POLL_INTERVAL:
                 session.refresh_requested.clear()
                 # Pure free-ride: read whatever access token(s) Claude Code
@@ -768,8 +826,13 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                 # numbers until the CLI re-seeds it.
                 payload, dead = await poll_active()
                 if payload is not None:
+                    last_payload = dict(payload)
+                    cc = read_claude_state()
+                    if cc:
+                        payload["cc"] = cc
                     if await session.write_payload(payload):
                         last_poll = time.time()
+                        last_cc = cc
                         used_successfully = True
                 elif dead:
                     # No live token in any config dir (missing, or a 401/expired
@@ -779,6 +842,7 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     # be a healthy link for a full POLL_INTERVAL.
                     log("No usable token; signalling no-data to device — run "
                         "`claude login` or use the CLI to let Claude Code renew it")
+                    last_payload = None
                     if await session.write_payload({"ok": False}):
                         last_poll = time.time()
                 else:
