@@ -1,4 +1,5 @@
 #include "sim_platform.h"
+#include <string.h>
 #include <SDL.h>
 #include <Arduino.h>
 #include <stdlib.h>
@@ -86,6 +87,18 @@ void sim_pump(void) {
         lv_mem_monitor(&mon);
         printf("[sim] LVGL pool: %u%% used, %u bytes free, biggest free block %u\n",
                (unsigned)mon.used_pct, (unsigned)mon.free_size, (unsigned)mon.free_biggest_size);
+    }
+
+    // SIM_ROTATE_MS=<ms>[,<ms>...] turns the fake IMU a quarter clockwise at
+    // each of those times, so an autoshot can reach the Pomodoro headlessly.
+    static const char* rotate_env = getenv("SIM_ROTATE_MS");
+    static const char* rotate_at = rotate_env;
+    if (rotate_at && *rotate_at) {
+        if (millis() >= (uint32_t)atol(rotate_at)) {
+            sim_imu_rotate();
+            const char* comma = strchr(rotate_at, ',');
+            rotate_at = comma ? comma + 1 : nullptr;
+        }
     }
 
     // SIM_SCREEN=<n> shows screen n (see screen_t) once the UI is up.
