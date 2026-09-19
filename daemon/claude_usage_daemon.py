@@ -693,6 +693,10 @@ class Session:
         log(f"Sending: {data.decode()}")
         try:
             await self.client.write_gatt_char(RX_CHAR_UUID, data, response=False)
+            # Writes without response are fire-and-forget; several in a row
+            # (usage, Codex, Copilot) must not outrun the device's loop, which
+            # takes one message per pass.
+            await asyncio.sleep(0.15)
             return True
         except BleakError as e:
             log(f"Write failed: {e}")

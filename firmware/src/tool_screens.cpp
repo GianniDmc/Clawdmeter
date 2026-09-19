@@ -99,10 +99,12 @@ static void fmt_reset(char* buf, size_t n, int mins) {
     else                     snprintf(buf, n, "resets in %dd %dh", mins / (24 * 60), (mins / 60) % 24);
 }
 
-static void fmt_tokens(char* buf, size_t n, uint32_t k) {
-    if (k < 1000)          snprintf(buf, n, "%luk tokens", (unsigned long)k);
-    else if (k < 10000)    snprintf(buf, n, "%lu.%luM tokens", (unsigned long)(k / 1000), (unsigned long)((k % 1000) / 100));
-    else                   snprintf(buf, n, "%luM tokens", (unsigned long)((k + 500) / 1000));
+// 8147 -> "8,147", the way GitHub prints credits.
+static void fmt_thousands(char* buf, size_t n, uint32_t v) {
+    if (v >= 1000000) snprintf(buf, n, "%lu,%03lu,%03lu", (unsigned long)(v / 1000000),
+                               (unsigned long)((v / 1000) % 1000), (unsigned long)(v % 1000));
+    else if (v >= 1000) snprintf(buf, n, "%lu,%03lu", (unsigned long)(v / 1000), (unsigned long)(v % 1000));
+    else                snprintf(buf, n, "%lu", (unsigned long)v);
 }
 
 // ---- Codex page ----------------------------------------------------------------
@@ -290,7 +292,7 @@ static void build_copilot_card(lv_obj_t* page, int x, int w, const char* title,
     lv_obj_t* t = make_label(card, &font_styrene_16, GH_MUTED, 14, 10, title);
     if (out_title) *out_title = t;
     *out_n = make_label(card, &font_styrene_48, GH_TEXT, 12, 30, "--");
-    *out_tok = make_label(card, &font_styrene_16, GH_MUTED, 14, 90, "prompts");
+    *out_tok = make_label(card, &font_styrene_16, GH_MUTED, 14, 90, "AI credits");
 }
 
 static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t long_cb) {
@@ -301,7 +303,7 @@ static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_
     lv_obj_t* mark = make_box(cp_page, MARGIN, 32, 14, 14, GH_ACCENT, GH_ACCENT, 4);
     (void)mark;
     make_label(cp_page, &font_styrene_28, GH_TEXT, MARGIN + 24, 22, "Copilot");
-    make_label(cp_page, &font_styrene_16, GH_MUTED, MARGIN + 24, 56, "premium requests, before multipliers");
+    make_label(cp_page, &font_styrene_16, GH_MUTED, MARGIN + 24, 56, "AI credits, no monthly limit");
 
     const int gap = 12;
     const int card_w = (c.width - 2 * MARGIN - gap) / 2;
@@ -331,12 +333,12 @@ static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_
 void tool_screens_copilot(const CopilotData& d) {
     if (!cp_page) return;
     char buf[32];
-    lv_label_set_text_fmt(cp_today_n, "%d", d.td);
-    fmt_tokens(buf, sizeof(buf), d.tt_k);
-    lv_label_set_text(cp_today_tok, buf);
-    lv_label_set_text_fmt(cp_month_n, "%d", d.md);
-    fmt_tokens(buf, sizeof(buf), d.mt_k);
-    lv_label_set_text(cp_month_tok, buf);
+    fmt_thousands(buf, sizeof(buf), d.tc);
+    lv_label_set_text(cp_today_n, buf);
+    lv_label_set_text_fmt(cp_today_tok, "credits - %d prompt%s", d.td, d.td == 1 ? "" : "s");
+    fmt_thousands(buf, sizeof(buf), d.mc);
+    lv_label_set_text(cp_month_n, buf);
+    lv_label_set_text_fmt(cp_month_tok, "credits - %d prompt%s", d.md, d.md == 1 ? "" : "s");
 }
 
 void tool_screens_copilot_grid(const CopilotGrid& g) {

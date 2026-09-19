@@ -72,8 +72,16 @@ static const uint16_t DESIRED_TIMEOUT   = 600;   // ×10ms = 6s, matches PPCP
 static volatile uint16_t param_fix_handle = CONN_HANDLE_NONE;  // pending retry
 static volatile uint32_t param_fix_at_ms  = 0;                 // when to send it
 static volatile uint16_t param_fix_spent  = CONN_HANDLE_NONE;  // one per connection
-static char rx_buf[BLE_BUF_SIZE];
-static volatile bool data_ready = false;
+// Incoming writes queue here. The daemon sends several messages per poll
+// (Claude usage, then Codex, Copilot...), back to back; with one buffer each
+// write overwrote the last before loop() got to it. The NimBLE host task
+// fills it, loop() drains it; the critical section keeps a slot from being
+// copied while it is written.
+#define RX_SLOTS 6
+static char rx_queue[RX_SLOTS][BLE_BUF_SIZE];
+static volatile uint8_t rx_head = 0, rx_tail = 0;   // head: next write; tail: next read
+static char rx_out[BLE_BUF_SIZE];                   // what ble_get_data() hands out
+static portMUX_TYPE rx_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool has_received_data = false;
 static char mac_str[18];
 
@@ -279,9 +287,13 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
         }
         std::string val = chr->getValue();
         size_t len = std::min(val.length(), (size_t)(BLE_BUF_SIZE - 1));
-        memcpy(rx_buf, val.c_str(), len);
-        rx_buf[len] = '\0';
-        data_ready = true;
+        portENTER_CRITICAL(&rx_mux);
+        const uint8_t next = (rx_head + 1) % RX_SLOTS;
+        if (next == rx_tail) rx_tail = (rx_tail + 1) % RX_SLOTS;   // full: drop the oldest
+        memcpy(rx_queue[rx_head], val.c_str(), len);
+        rx_queue[rx_head][len] = '\0';
+        rx_head = next;
+        portEXIT_CRITICAL(&rx_mux);
         has_received_data = true;
     }
 };
@@ -410,12 +422,20 @@ bool ble_has_bonds(void) {
 }
 
 bool ble_has_data(void) {
-    return data_ready;
+    return rx_head != rx_tail;
 }
 
+// One queued message per call, oldest first; valid until the next call.
 const char* ble_get_data(void) {
-    data_ready = false;
-    return rx_buf;
+    portENTER_CRITICAL(&rx_mux);
+    if (rx_head != rx_tail) {
+        memcpy(rx_out, rx_queue[rx_tail], BLE_BUF_SIZE);
+        rx_tail = (rx_tail + 1) % RX_SLOTS;
+    } else {
+        rx_out[0] = '\0';
+    }
+    portEXIT_CRITICAL(&rx_mux);
+    return rx_out;
 }
 
 void ble_send_ack(void) {

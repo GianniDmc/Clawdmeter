@@ -6,8 +6,9 @@
 // Pages for the other coding tools, each dressed like its tool:
 //   Codex   — terminal-style, monochrome: 5-hour and weekly limits as "% left",
 //             plus a status line mirroring what Codex is doing (hooks).
-//   Copilot — GitHub dark theme: prompts and tokens today and since the 1st,
-//             and the month as a calendar shaded like a contribution graph.
+//   Copilot — GitHub dark theme: AI credits (as GitHub's usage page counts
+//             them) today and since the 1st, and the month as a calendar
+//             shaded like a contribution graph.
 // Fed by the daemon's "cx" / "cp" / "cpg" messages; see daemon/tool_usage.py.
 
 struct CodexData {
@@ -18,8 +19,8 @@ struct CodexData {
 };
 
 struct CopilotData {
+    uint32_t tc, mc;     // AI credits today / since the 1st
     int      td, md;     // prompts today / since the 1st
-    uint32_t tt_k, mt_k; // tokens, thousands
 };
 
 #define COPILOT_MAX_DAYS 31
@@ -28,7 +29,7 @@ struct CopilotGrid {
     uint8_t  first_wd;   // weekday of the 1st, 0 = Monday
     uint8_t  days_in_month;
     uint8_t  n;          // days reported so far (= today's date)
-    uint16_t d[COPILOT_MAX_DAYS];
+    uint16_t d[COPILOT_MAX_DAYS];   // AI credits per day
 };
 
 // Builds both pages hidden inside `parent`; taps and long presses on them go

@@ -346,6 +346,18 @@ void pomodoro_tick(void) {
     if (!root) return;
 
     const uint8_t q = imu_hal_rotation_quadrant();
+
+    // Only a turn starts a block. The quadrant reads 0 until the IMU has a
+    // stable reading, and keeps its last value while the device lies flat —
+    // 0 is a side, so the device used to boot straight into a break.
+    static int16_t boot_quad = -1;
+    static bool    armed = false;
+    if (!armed) {
+        if (boot_quad < 0) boot_quad = q;
+        if (q == boot_quad) return;
+        armed = true;
+    }
+
     int want = -1;
     if (cfg.enabled && !suspended) {
         if      (q == cfg.focus_quad)             want = MODE_WORK;

@@ -6,11 +6,12 @@ Nothing here touches the network or any credential:
   time) into every session log under ~/.codex/sessions. The newest log holds
   the latest numbers; a window whose reset time has passed is back at 0 %.
 * GitHub Copilot has no limit worth watching on a company seat, so the device
-  shows how much was used today and since the 1st of the month. OpenCode (and
-  OpenChamber, which drives it) records every message with its provider and
-  token count; the Copilot app/CLI records its own requests. A "prompt" is a
-  message the user sent to Copilot — what GitHub bills as a premium request,
-  before the per-model multiplier, which is not stored anywhere locally.
+  shows AI credits used today and since the 1st — the unit GitHub's own usage
+  page reports. OpenCode (and OpenChamber, which drives it) stores a dollar
+  cost per reply; one AI credit is one cent, which matches GitHub's figure
+  once its report catches up (it lags by a few hours). The Copilot app/CLI
+  records nano-credits per request directly. Prompts sent come along as a
+  secondary count.
 
 Each reader returns None when its tool isn't installed or has nothing yet.
 """
@@ -117,9 +118,9 @@ def _connect_ro(db: Path) -> sqlite3.Connection | None:
         return None
 
 
-def _opencode_days(db: Path, since_ms: int) -> dict[str, list[int]]:
-    """{local YYYY-MM-DD: [prompts, tokens]} for Copilot traffic in OpenCode."""
-    out: dict[str, list[int]] = {}
+def _opencode_days(db: Path, since_ms: int) -> dict[str, list[float]]:
+    """{local YYYY-MM-DD: [prompts, credits]} for Copilot traffic in OpenCode."""
+    out: dict[str, list[float]] = {}
     con = _connect_ro(db)
     if con is None:
         return out
@@ -133,10 +134,10 @@ def _opencode_days(db: Path, since_ms: int) -> dict[str, list[int]]:
               AND json_extract(m.data, '$.model.providerID') = 'github-copilot'
             GROUP BY 1
             """, (since_ms,)).fetchall()
-        tokens = con.execute(
+        credits = con.execute(
             """
             SELECT date(time_created / 1000, 'unixepoch', 'localtime'),
-                   sum(coalesce(json_extract(data, '$.tokens.total'), 0))
+                   sum(coalesce(json_extract(data, '$.cost'), 0)) * 100
             FROM message
             WHERE time_created >= ?
               AND json_extract(data, '$.role') = 'assistant'
@@ -148,15 +149,15 @@ def _opencode_days(db: Path, since_ms: int) -> dict[str, list[int]]:
     finally:
         con.close()
     for day, n in prompts:
-        out.setdefault(day, [0, 0])[0] += int(n or 0)
-    for day, n in tokens:
-        out.setdefault(day, [0, 0])[1] += int(n or 0)
+        out.setdefault(day, [0, 0.0])[0] += int(n or 0)
+    for day, c in credits:
+        out.setdefault(day, [0, 0.0])[1] += float(c or 0)
     return out
 
 
-def _copilot_cli_days(db: Path, since_utc: str) -> dict[str, list[int]]:
+def _copilot_cli_days(db: Path, since_utc: str) -> dict[str, list[float]]:
     """Same, from the Copilot app/CLI's own request log (UTC timestamps)."""
-    out: dict[str, list[int]] = {}
+    out: dict[str, list[float]] = {}
     con = _connect_ro(db)
     if con is None:
         return out
@@ -165,8 +166,7 @@ def _copilot_cli_days(db: Path, since_utc: str) -> dict[str, list[int]]:
             """
             SELECT date(created_at, 'localtime'),
                    sum(initiator = 'user'),
-                   sum(coalesce(input_tokens, 0) + coalesce(output_tokens, 0)
-                       + coalesce(cache_read_tokens, 0) + coalesce(cache_write_tokens, 0))
+                   sum(coalesce(total_nano_aiu, 0)) / 1e9
             FROM assistant_usage_events
             WHERE created_at >= ?
             GROUP BY 1
@@ -175,16 +175,16 @@ def _copilot_cli_days(db: Path, since_utc: str) -> dict[str, list[int]]:
         return out
     finally:
         con.close()
-    for day, n, tok in rows:
-        entry = out.setdefault(day, [0, 0])
+    for day, n, cred in rows:
+        entry = out.setdefault(day, [0, 0.0])
         entry[0] += int(n or 0)
-        entry[1] += int(tok or 0)
+        entry[1] += float(cred or 0)
     return out
 
 
 def read_copilot(opencode_db: Path = OPENCODE_DB, copilot_db: Path = COPILOT_CLI_DB,
                  now: float | None = None) -> dict | None:
-    """Today and month-to-date, plus prompts per day of the month for the grid."""
+    """Credits and prompts today and month-to-date, plus credits per day for the grid."""
     now = time.time() if now is None else now
     today = dt.datetime.fromtimestamp(now)
     first = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -193,21 +193,21 @@ def read_copilot(opencode_db: Path = OPENCODE_DB, copilot_db: Path = COPILOT_CLI
 
     if not opencode_db.exists() and not copilot_db.exists():
         return None
-    days: dict[str, list[int]] = {}
+    days: dict[str, list[float]] = {}
     for source in (_opencode_days(opencode_db, since_ms), _copilot_cli_days(copilot_db, since_utc)):
-        for day, (n, tok) in source.items():
-            entry = days.setdefault(day, [0, 0])
+        for day, (n, cred) in source.items():
+            entry = days.setdefault(day, [0, 0.0])
             entry[0] += n
-            entry[1] += tok
+            entry[1] += cred
 
     key = today.strftime("%Y-%m-%d")
-    td, tt = days.get(key, [0, 0])
-    per_day = [days.get(first.replace(day=d).strftime("%Y-%m-%d"), [0, 0])[0]
+    td, tc = days.get(key, [0, 0.0])
+    per_day = [round(days.get(first.replace(day=d).strftime("%Y-%m-%d"), [0, 0.0])[1])
                for d in range(1, today.day + 1)]
     return {
-        "summary": {"td": td, "tt": tt // 1000,
-                    "md": sum(v[0] for v in days.values()),
-                    "mt": sum(v[1] for v in days.values()) // 1000},
+        "summary": {"tc": round(tc), "td": td,
+                    "mc": round(sum(v[1] for v in days.values())),
+                    "md": sum(v[0] for v in days.values())},
         "grid": {"mo": today.month,
                  "wd": first.weekday(),                        # 0 = Monday
                  "dim": calendar.monthrange(today.year, today.month)[1],

@@ -48,7 +48,7 @@ def test_copilot_counts_prompts_and_tokens_by_local_day(tmp_path):
     now = dt.datetime(2026, 9, 3, 15, 0).timestamp()
     ms = lambda d, h: int(dt.datetime(2026, 9, d, h).timestamp() * 1000)
     user = {"role": "user", "model": {"providerID": "github-copilot"}}
-    reply = {"role": "assistant", "providerID": "github-copilot", "tokens": {"total": 5000}}
+    reply = {"role": "assistant", "providerID": "github-copilot", "cost": 0.5}      # 50 credits
     _opencode_db(tmp_path / "oc.db", [
         ("s", ms(1, 10), user), ("s", ms(1, 10), reply),
         ("s", ms(3, 9), user), ("s", ms(3, 9), reply), ("s", ms(3, 9), reply),
@@ -57,8 +57,8 @@ def test_copilot_counts_prompts_and_tokens_by_local_day(tmp_path):
         ("s", dt.datetime(2026, 8, 31, 12).timestamp() * 1000, user),   # last month
     ])
     got = read_copilot(tmp_path / "oc.db", tmp_path / "missing.db", now=now)
-    assert got["summary"] == {"td": 1, "tt": 10, "md": 2, "mt": 15}
-    assert got["grid"] == {"mo": 9, "wd": dt.date(2026, 9, 1).weekday(), "dim": 30, "d": [1, 0, 1]}
+    assert got["summary"] == {"tc": 100, "td": 1, "mc": 150, "md": 2}
+    assert got["grid"] == {"mo": 9, "wd": dt.date(2026, 9, 1).weekday(), "dim": 30, "d": [50, 0, 100]}
 
 
 def test_copilot_absent_is_none(tmp_path):

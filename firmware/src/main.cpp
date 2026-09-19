@@ -126,10 +126,10 @@ static bool parse_tool_message(const char* json) {
         tool_screens_codex(d);
     } else if (strcmp(k, "cp") == 0) {
         CopilotData d = {};
-        d.td   = doc["td"] | 0;
-        d.md   = doc["md"] | 0;
-        d.tt_k = doc["tt"] | 0UL;
-        d.mt_k = doc["mt"] | 0UL;
+        d.tc = doc["tc"] | 0UL;
+        d.mc = doc["mc"] | 0UL;
+        d.td = doc["td"] | 0;
+        d.md = doc["md"] | 0;
         tool_screens_copilot(d);
     } else if (strcmp(k, "cpg") == 0) {
         CopilotGrid g = {};
@@ -474,10 +474,12 @@ void loop() {
 
     check_serial_cmd();
 
+    // One message per loop pass; the queue in ble.cpp holds the rest.
     if (ble_has_data()) {
-        if (parse_tool_message(ble_get_data())) {
+        const char* msg = ble_get_data();
+        if (parse_tool_message(msg)) {
             ble_send_ack();
-        } else if (parse_json(ble_get_data(), &usage)) {
+        } else if (parse_json(msg, &usage)) {
             int g_before = usage_rate_group();
             bool session_reset = usage_rate_sample(usage.session_pct);
             int g_after = usage_rate_group();
