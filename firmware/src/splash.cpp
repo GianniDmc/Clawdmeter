@@ -62,12 +62,14 @@ static const char* GROUP_NAMES[GROUP_COUNT][GROUP_MAX] = {
     // Group 0 — idle / sleepy (calm, investigative). Magnifier first: it's
     // the boot pick, and lurking-first would boot to a near-empty screen.
     { "magnifier", "walking", "pointing", "lurking" },
+    // "laptop", "waving" and "jumping happy" are kept out of the rotation:
+    // they mean Claude Code is working / waiting on you / done (claude_state).
     // Group 1 — normal pace
-    { "crab walking", "waving", "trumpet", "basketball" },
-    // Group 2 — active (typing along with you)
-    { "laptop", "dancing", "skateboard", "soccer" },
-    // Group 3 — heavy burn (high-energy rides + the most exuberant jump)
-    { "racing car", "cloud", "sailing scene", "jumping happy" },
+    { "crab walking", "jumping", "trumpet", "basketball" },
+    // Group 2 — active
+    { "dancing", "skateboard", "soccer" },
+    // Group 3 — heavy burn (high-energy rides)
+    { "racing car", "cloud", "sailing scene" },
 };
 
 // Scratch stage: the current animation frame composed centered onto the full
