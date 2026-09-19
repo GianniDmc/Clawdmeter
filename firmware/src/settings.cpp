@@ -33,12 +33,15 @@ LV_FONT_DECLARE(font_styrene_16);
 static const char* const SOUND_NAMES[SOUND_COUNT] = { "Bell", "Chime", "Beep", "Alert" };
 
 static SoundConfig snd = { 60, SOUND_CHIME, true };
+static bool buttons_to_host = false;
 
 static lv_obj_t* root       = nullptr;
 static lv_obj_t* pomo_btn   = nullptr;
 static lv_obj_t* pomo_lbl   = nullptr;
 static lv_obj_t* alert_btn  = nullptr;
 static lv_obj_t* alert_lbl  = nullptr;
+static lv_obj_t* host_btn   = nullptr;
+static lv_obj_t* host_lbl   = nullptr;
 static lv_obj_t* focus_val  = nullptr;
 static lv_obj_t* break_val  = nullptr;
 static lv_obj_t* long_val   = nullptr;
@@ -59,6 +62,7 @@ void settings_load(void) {
     snd.volume        = prefs.getUChar("snd_vol", snd.volume);
     snd.end_sound     = prefs.getUChar("snd_end", snd.end_sound);
     snd.claude_alerts = prefs.getUChar("cc_alert", snd.claude_alerts ? 1 : 0) != 0;
+    buttons_to_host   = prefs.getUChar("btn_host", buttons_to_host ? 1 : 0) != 0;
     prefs.end();
 
     if (snd.volume > 100) snd.volume = 100;
@@ -72,10 +76,15 @@ static void save_sound(void) {
     prefs.putUChar("snd_vol", snd.volume);
     prefs.putUChar("snd_end", snd.end_sound);
     prefs.putUChar("cc_alert", snd.claude_alerts ? 1 : 0);
+    prefs.putUChar("btn_host", buttons_to_host ? 1 : 0);
     prefs.end();
 }
 
 const SoundConfig& settings_sound(void) { return snd; }
+
+// Boards without the settings page (no IMU) can't flip this back, so they keep
+// the upstream behaviour: buttons are a keyboard for the host.
+bool settings_buttons_to_host(void) { return buttons_to_host || !root; }
 
 // ---- Widgets -----------------------------------------------------------------
 
@@ -129,6 +138,7 @@ static void refresh(void) {
     const PomodoroConfig& c = pomodoro_config();
     paint_toggle(pomo_btn, pomo_lbl, c.enabled);
     paint_toggle(alert_btn, alert_lbl, snd.claude_alerts);
+    paint_toggle(host_btn, host_lbl, buttons_to_host);
 
     lv_label_set_text_fmt(focus_val,  "%u min", c.focus_min);
     lv_label_set_text_fmt(break_val,  "%u min", c.break_min);
@@ -153,6 +163,12 @@ static void alert_toggle_cb(lv_event_t* e) {
     (void)e;
     snd.claude_alerts = !snd.claude_alerts;
     if (snd.claude_alerts) sound_hal_play(SOUND_ALERT);
+    refresh();
+}
+
+static void host_toggle_cb(lv_event_t* e) {
+    (void)e;
+    buttons_to_host = !buttons_to_host;
     refresh();
 }
 
@@ -319,6 +335,23 @@ void settings_init(lv_obj_t* parent) {
     lv_label_set_text(alert_hint, "Sound when Claude Code needs you or is done");
     lv_obj_set_pos(alert_hint, PAD_X, y);
     y += 24 + SECTION_GAP;
+
+    make_heading(y, "Buttons");
+    y += 60;
+
+    make_row_label(y, "To the Mac");
+    host_btn = make_toggle(y, host_toggle_cb, &host_lbl);
+    y += ROW_H + 4;
+
+    lv_obj_t* host_hint = lv_label_create(root);
+    lv_obj_set_width(host_hint, content_w);
+    lv_label_set_long_mode(host_hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(host_hint, &font_styrene_16, 0);
+    lv_obj_set_style_text_color(host_hint, THEME_DIM, 0);
+    lv_label_set_text(host_hint, "On: Space and Shift+Tab for Claude Code.\n"
+                                 "Off: BOOT switches screens, KEY opens settings.");
+    lv_obj_set_pos(host_hint, PAD_X, y);
+    y += 48 + SECTION_GAP;
 
     lv_obj_t* done = make_button((c.width - 200) / 2, y, 200, ROW_H,
                                  "Done", &font_styrene_24, nullptr);

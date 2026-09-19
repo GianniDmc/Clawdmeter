@@ -21,6 +21,10 @@ struct SoundConfig {
 void settings_load(void);
 const SoundConfig& settings_sound(void);
 
+// true: BOOT / KEY act as a Bluetooth keyboard for the host (Space, Shift+Tab
+// for Claude Code). false (default): they drive the device itself.
+bool settings_buttons_to_host(void);
+
 void settings_init(lv_obj_t* parent);
 void settings_tick(void);
 

@@ -314,8 +314,12 @@ void loop() {
     if (!idle_is_asleep()) display_hal_tick();
 
     // ---- Physical buttons ----
+    //   Buttons "to the Mac" (settings; forced on boards without the page):
     //   PRIMARY   → HID Space  (Claude Code voice-mode PTT)
     //   SECONDARY → HID Shift+Tab  (mode toggle; only if the board has one)
+    //   Otherwise they drive the device:
+    //   PRIMARY   → settings open: close; Pomodoro up: restart; else switch screen
+    //   SECONDARY → open / close the settings
     //   PWR       → settings open: close them; Pomodoro up: restart the block;
     //               on splash: cycle animations; on usage: cycle brightness;
     //               hold ~3s + release: pairing mode
@@ -326,14 +330,25 @@ void loop() {
     {
         static bool primary_was = false;
         static bool primary_wake_swallowed = false;
+        static bool primary_sent_key = false;   // release must match what the press did
         bool primary_now = input_hal_is_held(INPUT_BTN_PRIMARY);
         if (primary_now != primary_was) {
             if (primary_now) {
-                if (idle_consume_wake_press()) primary_wake_swallowed = true;
-                else                            ble_keyboard_press(0x2C, 0);  // HID Space, no mods
+                if (idle_consume_wake_press()) {
+                    primary_wake_swallowed = true;
+                } else if (settings_buttons_to_host()) {
+                    ble_keyboard_press(0x2C, 0);  // HID Space, no mods
+                    primary_sent_key = true;
+                } else if (settings_is_open()) {
+                    settings_close();
+                } else if (pomodoro_is_active()) {
+                    pomodoro_restart();
+                } else {
+                    ui_toggle_splash();
+                }
             } else {
                 if (primary_wake_swallowed) primary_wake_swallowed = false;
-                else                        ble_keyboard_release();
+                else if (primary_sent_key)  { ble_keyboard_release(); primary_sent_key = false; }
             }
             primary_was = primary_now;
         }
@@ -341,14 +356,23 @@ void loop() {
         if (board_caps().button_count >= 2) {
             static bool secondary_was = false;
             static bool secondary_wake_swallowed = false;
+            static bool secondary_sent_key = false;
             bool secondary_now = input_hal_is_held(INPUT_BTN_SECONDARY);
             if (secondary_now != secondary_was) {
                 if (secondary_now) {
-                    if (idle_consume_wake_press()) secondary_wake_swallowed = true;
-                    else                            ble_keyboard_press(0x2B, 0x02);  // HID Tab + LEFT_SHIFT
+                    if (idle_consume_wake_press()) {
+                        secondary_wake_swallowed = true;
+                    } else if (settings_buttons_to_host()) {
+                        ble_keyboard_press(0x2B, 0x02);  // HID Tab + LEFT_SHIFT
+                        secondary_sent_key = true;
+                    } else if (settings_is_open()) {
+                        settings_close();
+                    } else {
+                        settings_open();
+                    }
                 } else {
                     if (secondary_wake_swallowed) secondary_wake_swallowed = false;
-                    else                          ble_keyboard_release();
+                    else if (secondary_sent_key)  { ble_keyboard_release(); secondary_sent_key = false; }
                 }
                 secondary_was = secondary_now;
             }
