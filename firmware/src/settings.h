@@ -12,7 +12,8 @@
 // preferences, and every board with a speaker shares them.
 struct SoundConfig {
     uint8_t volume;          // 0..100, 0 = silent
-    uint8_t end_sound;       // SOUND_* played when a Pomodoro block ends
+    uint8_t end_sound;       // SOUND_* played when a Pomodoro block ends and
+                             // when Claude, Codex or OpenCode finishes a turn
     bool    claude_alerts;   // sound when Claude Code needs you / finishes
 };
 

@@ -121,7 +121,7 @@ static CodexPanel cx_panels[2];
 static lv_obj_t*  cx_status = nullptr;
 static lv_obj_t*  cx_clock = nullptr;
 static char       cx_state[8] = "";
-static bool       cx_switched = false;   // we moved the user here for a "wait"
+static screen_t   cx_back = SCREEN_COUNT;  // screen to restore after a "wait"
 
 static void build_codex_panel(lv_obj_t* page, int y, const char* title, CodexPanel* out) {
     const int w = board_caps().width - 2 * MARGIN;
@@ -188,7 +188,7 @@ static void paint_codex_status(void) {
 // the panel and brings its page up (then goes back once answered); a finished
 // turn chimes. Same rules as Claude Code's (claude_state.cpp).
 static void tool_state_changed(const char* st, const char* prev, screen_t page,
-                               bool* switched, void (*set_waiting)(bool)) {
+                               screen_t* back_to, void (*set_waiting)(bool)) {
     const bool alerts = settings_sound().claude_alerts;
     const bool wait = strcmp(st, "wait") == 0;
     set_waiting(wait);
@@ -198,16 +198,17 @@ static void tool_state_changed(const char* st, const char* prev, screen_t page,
         idle_note_activity();
         if (ui_get_current_screen() != page &&
             !pomodoro_is_active() && !settings_is_open()) {
+            *back_to = ui_get_current_screen();      // restore it once answered
             ui_show_screen(page);
-            *switched = true;
         }
     } else if (strcmp(st, "done") == 0 && alerts) {
-        sound_hal_play(SOUND_CHIME);
+        sound_hal_play(settings_sound().end_sound);
     }
 
-    if (strcmp(prev, "wait") == 0 && !wait && *switched) {
-        *switched = false;
-        if (ui_get_current_screen() == page) ui_show_screen(SCREEN_SPLASH);
+    if (strcmp(prev, "wait") == 0 && !wait && *back_to != SCREEN_COUNT) {
+        const screen_t back = *back_to;
+        *back_to = SCREEN_COUNT;                     // SCREEN_COUNT = we did not switch
+        if (ui_get_current_screen() == page) ui_show_screen(back);
     }
 }
 
@@ -222,7 +223,7 @@ void tool_screens_codex(const CodexData& d) {
         strlcpy(prev, cx_state, sizeof(prev));
         strlcpy(cx_state, d.st, sizeof(cx_state));
         Serial.printf("Codex: %s\n", cx_state[0] ? cx_state : "idle");
-        tool_state_changed(cx_state, prev, SCREEN_CODEX, &cx_switched,
+        tool_state_changed(cx_state, prev, SCREEN_CODEX, &cx_back,
                            pomodoro_set_codex_waiting);
     }
     paint_codex_status();
@@ -250,7 +251,7 @@ static lv_obj_t* cp_clock = nullptr;
 static lv_obj_t* cp_dot = nullptr;       // status row: OpenCode's live state
 static lv_obj_t* cp_status = nullptr;
 static char      oc_state[8] = "";
-static bool      oc_switched = false;
+static screen_t  cp_back = SCREEN_COUNT;
 
 #define GH_WARN    lv_color_hex(0xd29922)   // GitHub's attention yellow
 #define GH_OK      lv_color_hex(0x3fb950)
@@ -403,7 +404,7 @@ void tool_screens_opencode_state(const char* st) {
         strlcpy(prev, oc_state, sizeof(prev));
         strlcpy(oc_state, st, sizeof(oc_state));
         Serial.printf("OpenCode: %s\n", oc_state[0] ? oc_state : "idle");
-        tool_state_changed(oc_state, prev, SCREEN_COPILOT, &oc_switched,
+        tool_state_changed(oc_state, prev, SCREEN_COPILOT, &cp_back,
                            pomodoro_set_opencode_waiting);
     }
     paint_copilot_status();

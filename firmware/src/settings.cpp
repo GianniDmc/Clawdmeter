@@ -356,7 +356,7 @@ void settings_init(lv_obj_t* parent) {
     make_row_label(y, "Volume");
     make_stepper(y, FIELD_VOLUME, "-", "+", false, &volume_val);
     y += ROW_STEP;
-    make_row_label(y, "End");
+    make_row_label(y, "Done");
     make_stepper(y, FIELD_SOUND, "<", ">", false, &sound_val);
     y += ROW_STEP;
     make_row_label(y, "Alerts");
