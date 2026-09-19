@@ -11,6 +11,24 @@ static volatile bool     touch_pressed = false;
 static volatile uint16_t touch_x = 0;
 static volatile uint16_t touch_y = 0;
 
+// display.cpp: the quadrant whose MADCTL is on the panel right now.
+uint8_t display_applied_quadrant(void);
+
+// The swap/mirror set in touch_hal_init() calibrates the controller for the
+// base MADCTL (q3, upright). The other three quadrants re-address the panel,
+// so the same finger lands on a different LVGL pixel: undo that here. Derived
+// from the MADCTL bits (q2 = MY, q0 = MX, q1 = MX|MY|MV), each a proper
+// rotation of the base frame.
+static void map_to_rotation(int16_t bx, int16_t by, uint16_t* x, uint16_t* y) {
+    const int16_t W = LCD_WIDTH - 1, H = LCD_HEIGHT - 1;
+    switch (display_applied_quadrant()) {
+    case 0:  *x = W - by; *y = bx;     break;
+    case 1:  *x = W - bx; *y = H - by; break;
+    case 2:  *x = by;     *y = H - bx; break;
+    default: *x = bx;     *y = by;     break;
+    }
+}
+
 static void IRAM_ATTR touch_isr(void) {
     touch_data_ready = true;
 }
@@ -38,9 +56,11 @@ void touch_hal_read(uint16_t* x, uint16_t* y, bool* pressed) {
         int16_t tx[5], ty[5];
         uint8_t n = touch.getPoint(tx, ty, touch.getSupportTouchPoint());
         if (n > 0) {
+            uint16_t mx, my;
+            map_to_rotation(tx[0], ty[0], &mx, &my);
             touch_pressed = true;
-            touch_x = (uint16_t)tx[0];
-            touch_y = (uint16_t)ty[0];
+            touch_x = mx;
+            touch_y = my;
         } else {
             touch_pressed = false;
         }

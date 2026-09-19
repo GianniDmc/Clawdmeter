@@ -12,11 +12,10 @@ LV_FONT_DECLARE(font_tiempos_56);
 LV_FONT_DECLARE(font_styrene_28);
 LV_FONT_DECLARE(font_styrene_16);
 
-// Quadrants from imu_hal_rotation_quadrant(): quarter turns clockwise from the
-// default mounting. On the C6 AMOLED-2.16, 1 is the device lying on its button
-// edge; the default focus side is one more turn clockwise from there, which
-// puts the break on the default mounting and leaves the button edge and the
-// edge opposite it for the normal screens.
+// Quadrants from imu_hal_rotation_quadrant(). On the C6 AMOLED-2.16, 3 is
+// upright on the desk and 1 upside down, standing on the button edge; 0 and 2
+// are the two sides. Focus defaults to one of the sides with the break on the
+// other, so upright — and upside down — keep the normal screens.
 #define DEFAULT_FOCUS_QUAD  2
 #define DEFAULT_FOCUS_MIN   25
 #define DEFAULT_BREAK_MIN   5

@@ -82,8 +82,16 @@ void display_hal_draw_bitmap(int32_t x, int32_t y, int32_t w, int32_t h,
 //   q2 / q0 (on a side): MY|ML 0x90 / MX|ML 0x50
 static const uint8_t MADCTL_BY_QUADRANT[4] = { 0x50, 0xF0, 0x90, 0x30 };
 
+// The quadrant whose MADCTL is actually on the panel — the base write in
+// send_panel_driving_init() is q3's. touch.cpp maps coordinates by this rather
+// than by the IMU, which runs ahead of the panel until display_hal_tick().
+static uint8_t applied_quadrant = 3;
+
+uint8_t display_applied_quadrant(void) { return applied_quadrant; }
+
 static void apply_rotation(uint8_t q) {
     if (!bus) return;
+    applied_quadrant = q & 3;
     bus->beginWrite();
     bus->writeC8D8(0x36, MADCTL_BY_QUADRANT[q & 3]);
     bus->endWrite();
