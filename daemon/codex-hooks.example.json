@@ -77,6 +77,17 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<repo>/daemon/.venv/bin/python <repo>/daemon/claude_state_hook.py codex",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

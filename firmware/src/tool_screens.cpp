@@ -159,7 +159,7 @@ static void build_codex(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t 
     make_label(cx_page, &font_mono_18, CX_DIM, MARGIN + 2, 70, "rate limits");
     build_codex_panel(cx_page, 110, "5h limit", &cx_panels[0]);
     build_codex_panel(cx_page, 266, "weekly limit", &cx_panels[1]);
-    cx_status = make_label(cx_page, &font_mono_18, CX_DIM, MARGIN + 2, 428, "");
+    cx_status = make_label(cx_page, &font_mono_18, CX_DIM, MARGIN + 2, 428, "- idle");
 }
 
 static void paint_codex_status(void) {
@@ -176,7 +176,8 @@ static void paint_codex_status(void) {
         lv_label_set_text(cx_status, "* done");
         lv_obj_set_style_text_color(cx_status, CX_OK, 0);
     } else {
-        lv_label_set_text(cx_status, "");
+        lv_label_set_text(cx_status, "- idle");
+        lv_obj_set_style_text_color(cx_status, CX_DIM, 0);
     }
 }
 
