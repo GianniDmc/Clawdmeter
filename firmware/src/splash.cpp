@@ -3,6 +3,7 @@
 #include "splash_geometry.h"
 #include "charge_anim.h"
 #include "pomodoro.h"
+#include "settings.h"
 #include "theme.h"
 #include "usage_rate.h"
 #include "hal/board_caps.h"
@@ -752,7 +753,7 @@ void splash_tick(void) {
     // The charge overlay is an ordinary LVGL widget, but on the direct-draw
     // boards this module paints straight onto the panel and would scribble
     // over it. Standing still for the two seconds it runs is enough.
-    if (charge_anim_is_active() || pomodoro_is_active()) return;
+    if (charge_anim_is_active() || pomodoro_is_active() || settings_is_open()) return;
 
 #if SPLASH_DIRECT_DRAW
     // Deferred full repaint after a (re)show — runs now that LVGL has drawn the

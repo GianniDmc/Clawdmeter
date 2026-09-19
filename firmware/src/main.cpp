@@ -10,6 +10,7 @@
 #include "splash.h"
 #include "charge_anim.h"
 #include "pomodoro.h"
+#include "settings.h"
 #include "usage_rate.h"
 #include "idle.h"
 #include "idle_cfg.h"
@@ -301,6 +302,7 @@ void loop() {
     imu_hal_tick();
     sound_hal_tick();
     pomodoro_tick();
+    settings_tick();
     splash_tick();
     splash_mascot_tick();
     // Rotation transition (blank + ramp) would fight the idle fade — skip
@@ -311,7 +313,8 @@ void loop() {
     // ---- Physical buttons ----
     //   PRIMARY   → HID Space  (Claude Code voice-mode PTT)
     //   SECONDARY → HID Shift+Tab  (mode toggle; only if the board has one)
-    //   PWR       → on splash: cycle animations; on usage: cycle brightness;
+    //   PWR       → settings open: close them; Pomodoro up: restart the block;
+    //               on splash: cycle animations; on usage: cycle brightness;
     //               hold ~3s + release: pairing mode
     // First press from sleep is consumed as a wake-only event by
     // idle_consume_wake_press(); the normal action fires from the second
@@ -352,7 +355,8 @@ void loop() {
             if (!idle_consume_wake_press()) {
                 // On splash: cycle animations. On the usage view: cycle
                 // screen brightness (single non-splash view, no more screens).
-                if (pomodoro_is_active())                     pomodoro_restart();
+                if (settings_is_open())                       settings_close();
+                else if (pomodoro_is_active())                pomodoro_restart();
                 else if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
                 else                                          brightness_cycle();
             }

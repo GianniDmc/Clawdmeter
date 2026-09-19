@@ -2,6 +2,7 @@
 #include <SDL.h>
 #include <Arduino.h>
 #include <stdlib.h>
+#include "../../settings.h"
 
 static bool quit = false;
 
@@ -38,6 +39,8 @@ void sim_pump(void) {
             case SDLK_d:      sim_playback_toggle_link(); break;
             case SDLK_s:      sim_display_screenshot(NULL); break;
             case SDLK_c:      charging = !charging; break;
+            case SDLK_r:      sim_imu_rotate(); break;
+            case SDLK_o:      settings_open(); break;
             case SDLK_MINUS:  battery = battery < 5 ? 0 : battery - 5; break;
             case SDLK_EQUALS: battery = battery > 95 ? 100 : battery + 5; break;
             case SDLK_p:
@@ -59,6 +62,14 @@ void sim_pump(void) {
     if (pwr_down && !pwr_long_fired && millis() - pwr_down_ms >= PWR_LONG_MS) {
         pwr_long_fired = true;
         edge_long = true;
+    }
+
+    // Headless: SIM_SETTINGS=1 opens the settings page once the UI is up, so
+    // an autoshot can capture it.
+    static bool settings_armed = getenv("SIM_SETTINGS") != nullptr;
+    if (settings_armed && millis() >= 300) {
+        settings_armed = false;
+        settings_open();
     }
 
     // Headless CI hook: SIM_AUTOSHOT_MS=<ms> → screenshot + exit.

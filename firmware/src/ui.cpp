@@ -2,6 +2,7 @@
 #include "splash.h"
 #include "charge_anim.h"
 #include "pomodoro.h"
+#include "settings.h"
 #include <lvgl.h>
 #include <time.h>
 #include "logo.h"
@@ -315,6 +316,7 @@ static void format_reset_time(int mins, char* buf, size_t len) {
 
 // Forward decls — callbacks defined near ui_show_screen below
 static void global_click_cb(lv_event_t* e);
+static void long_press_cb(lv_event_t* e);
 
 static lv_obj_t* make_panel(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_t* panel = lv_obj_create(parent);
@@ -479,7 +481,10 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_border_width(usage_container, 0, 0);
     lv_obj_set_style_pad_all(usage_container, 0, 0);
     lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(usage_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+    // SHORT_CLICKED, not CLICKED: a long press opens the settings, and its
+    // release must not also flip the screen underneath.
+    lv_obj_add_event_cb(usage_container, global_click_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(usage_container, long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
 
     lbl_title = lv_label_create(usage_container);
     lv_label_set_text(lbl_title, "Usage");
@@ -562,7 +567,8 @@ void ui_init(void) {
     splash_init(scr);
 
     if (splash_get_root()) {
-        lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_SHORT_CLICKED, NULL);
+        lv_obj_add_event_cb(splash_get_root(), long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
     }
 
     // Corner mascot in the old logo slot. The still Clawd is shorter than the
@@ -592,6 +598,10 @@ void ui_init(void) {
     }
 
     pomodoro_init(scr);
+    if (pomodoro_get_root()) {
+        lv_obj_add_event_cb(pomodoro_get_root(), long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
+    }
+    settings_init(scr);
 
     // Last, so the charge overlay covers everything else when it plays.
     charge_anim_init(scr);
@@ -770,8 +780,14 @@ static void apply_battery_visibility(void) {
     else                                  lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void long_press_cb(lv_event_t* e) {
+    (void)e;
+    settings_open();
+}
+
 static void global_click_cb(lv_event_t* e) {
     (void)e;
+    if (settings_is_open()) return;
     if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
     else                                  ui_show_screen(SCREEN_SPLASH);
 }

@@ -18,6 +18,7 @@ bool sim_take_pwr_long(void);
 bool sim_take_pwr_released(void);
 int  sim_battery_pct(void);
 bool sim_charging(void);
+void sim_imu_rotate(void);         // r key: quarter turn clockwise
 
 // Scenario playback controls, implemented in ble_sim.cpp.
 void sim_playback_toggle(void);

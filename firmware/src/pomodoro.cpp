@@ -6,27 +6,29 @@
 #include "hal/sound_hal.h"
 #include "hal/board_caps.h"
 #include <Arduino.h>
+#include <Preferences.h>
 
 LV_FONT_DECLARE(font_tiempos_56);
 LV_FONT_DECLARE(font_styrene_28);
 LV_FONT_DECLARE(font_styrene_16);
 
-#define WORK_MS   (25UL * 60UL * 1000UL)
-#define BREAK_MS  (5UL  * 60UL * 1000UL)
-
-// Quadrants from imu_hal_rotation_quadrant(): 0 is the default mounting, 1 and
-// 3 are the two sides, 2 is upside down. Only the sides run a block; both
-// upright positions pause, so setting the device down the "wrong" way up does
-// not silently start counting.
-#define QUAD_WORK   1
-#define QUAD_BREAK  3
+// Quadrants from imu_hal_rotation_quadrant(): quarter turns clockwise from the
+// default mounting. On the C6 AMOLED-2.16, 1 is the device lying on its button
+// edge; the default focus side is one more turn clockwise from there, which
+// puts the break on the default mounting and leaves the button edge and the
+// edge opposite it for the normal screens.
+#define DEFAULT_FOCUS_QUAD  2
+#define DEFAULT_FOCUS_MIN   25
+#define DEFAULT_BREAK_MIN   5
 
 #define ARC_INSET   56     // ring margin from the screen edge
 #define ARC_WIDTH   16
 
-enum { MODE_WORK = 0, MODE_BREAK = 1, MODE_COUNT };
+enum { MODE_WORK = 0, MODE_BREAK = 1 };
 
-static const uint32_t full_ms[MODE_COUNT] = { WORK_MS, BREAK_MS };
+static PomodoroConfig cfg = {
+    true, DEFAULT_FOCUS_MIN, DEFAULT_BREAK_MIN, DEFAULT_FOCUS_QUAD
+};
 
 static lv_obj_t* root     = nullptr;
 static lv_obj_t* arc      = nullptr;
@@ -34,53 +36,59 @@ static lv_obj_t* time_lbl = nullptr;
 static lv_obj_t* mode_lbl = nullptr;
 static lv_obj_t* hint_lbl = nullptr;
 
-static bool     s_active = false;
-static int      cur_mode = -1;                 // -1 while paused/hidden
-static uint32_t remaining[MODE_COUNT] = { WORK_MS, BREAK_MS };
-static bool     done[MODE_COUNT]      = { false, false };
+static bool     s_active  = false;
+static bool     suspended = false;
+static int      cur_mode  = -1;       // -1 while hidden
+static uint32_t total_ms  = 0;        // length of the block on screen
+static uint32_t remaining = 0;
+static bool     done      = false;
 static uint32_t last_ms   = 0;
-static int32_t  shown_sec = -1;                // last value painted, in seconds
+static int32_t  shown_sec = -1;       // last value painted, in seconds
 
-static lv_color_t mode_color(int mode) {
-    return (mode == MODE_BREAK) ? THEME_GREEN : THEME_ACCENT;
+static uint32_t mode_ms(int mode) {
+    const uint8_t min = (mode == MODE_BREAK) ? cfg.break_min : cfg.focus_min;
+    return (uint32_t)min * 60UL * 1000UL;
 }
 
-static void paint(int mode) {
-    const uint32_t left = remaining[mode];
-    const int32_t  secs = (int32_t)((left + 999) / 1000);   // round up: 25:00 on start
+static void paint(void) {
+    const int32_t secs = (int32_t)((remaining + 999) / 1000);   // round up: 25:00 on start
     if (secs == shown_sec) return;
     shown_sec = secs;
 
     lv_label_set_text_fmt(time_lbl, "%02d:%02d", (int)(secs / 60), (int)(secs % 60));
 
     // The ring empties as the block runs.
-    const uint32_t total = full_ms[mode];
-    lv_arc_set_value(arc, (int32_t)((uint64_t)left * 1000 / total));
+    lv_arc_set_value(arc, total_ms ? (int32_t)((uint64_t)remaining * 1000 / total_ms) : 0);
 
-    if (done[mode]) {
+    if (done) {
         lv_label_set_text(mode_lbl, "DONE");
-        lv_label_set_text(hint_lbl, "Stand it up");
+        lv_label_set_text(hint_lbl, "Turn it to start again");
     } else {
-        lv_label_set_text(mode_lbl, mode == MODE_BREAK ? "BREAK" : "FOCUS");
+        lv_label_set_text(mode_lbl, cur_mode == MODE_BREAK ? "BREAK" : "FOCUS");
         lv_label_set_text(hint_lbl, "Tap to restart");
     }
 }
 
-static void enter(int mode) {
-    // A block that ran out last time starts over rather than sitting at 00:00.
-    if (done[mode]) {
-        done[mode]      = false;
-        remaining[mode] = full_ms[mode];
-    }
-    cur_mode  = mode;
+static void start_block(void) {
+    total_ms  = mode_ms(cur_mode);
+    remaining = total_ms;
+    done      = false;
     last_ms   = millis();
     shown_sec = -1;
+    paint();
+}
 
-    const lv_color_t col = mode_color(mode);
+static void enter(int mode) {
+    cur_mode = mode;
+
+    const lv_color_t col = (mode == MODE_BREAK) ? THEME_GREEN : THEME_ACCENT;
     lv_obj_set_style_arc_color(arc, col, LV_PART_INDICATOR);
     lv_obj_set_style_text_color(mode_lbl, col, 0);
 
-    paint(mode);
+    // Always a fresh block: the side you land on is a decision made now, not a
+    // bookmark into the last one.
+    start_block();
+
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(root);
     s_active = true;
@@ -106,17 +114,50 @@ static void tap_cb(lv_event_t* e) {
 
 void pomodoro_restart(void) {
     if (cur_mode < 0) return;
-    done[cur_mode]      = false;
-    remaining[cur_mode] = full_ms[cur_mode];
-    last_ms             = millis();
-    shown_sec           = -1;
-    paint(cur_mode);
+    start_block();
     idle_note_activity();
+}
+
+static void load_config(void) {
+    Preferences prefs;
+    prefs.begin("clawdmeter", true);
+    cfg.enabled    = prefs.getUChar("pomo_on", cfg.enabled ? 1 : 0) != 0;
+    cfg.focus_min  = prefs.getUChar("pomo_fmin", cfg.focus_min);
+    cfg.break_min  = prefs.getUChar("pomo_bmin", cfg.break_min);
+    cfg.focus_quad = prefs.getUChar("pomo_fq", cfg.focus_quad);
+    prefs.end();
+
+    cfg.focus_min  = pomodoro_clamp_focus(cfg.focus_min);
+    cfg.break_min  = pomodoro_clamp_break(cfg.break_min);
+    cfg.focus_quad &= 3;
+    Serial.printf("Pomodoro: %s, focus %u min on side %u, break %u min\n",
+                  cfg.enabled ? "on" : "off", cfg.focus_min, cfg.focus_quad, cfg.break_min);
+}
+
+void pomodoro_save_config(void) {
+    Preferences prefs;
+    prefs.begin("clawdmeter", false);
+    prefs.putUChar("pomo_on", cfg.enabled ? 1 : 0);
+    prefs.putUChar("pomo_fmin", cfg.focus_min);
+    prefs.putUChar("pomo_bmin", cfg.break_min);
+    prefs.putUChar("pomo_fq", cfg.focus_quad);
+    prefs.end();
+}
+
+const PomodoroConfig& pomodoro_config(void) { return cfg; }
+
+void pomodoro_set_config(const PomodoroConfig& c) { cfg = c; }
+
+void pomodoro_set_suspended(bool s) {
+    suspended = s;
+    if (s) leave();
 }
 
 void pomodoro_init(lv_obj_t* parent) {
     const BoardCaps& c = board_caps();
     if (!c.has_imu) return;
+
+    load_config();
 
     const int16_t side = (c.width < c.height ? c.width : c.height) - 2 * ARC_INSET;
 
@@ -130,7 +171,7 @@ void pomodoro_init(lv_obj_t* parent) {
     lv_obj_set_style_radius(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(root, tap_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(root, tap_cb, LV_EVENT_SHORT_CLICKED, NULL);
 
     arc = lv_arc_create(root);
     lv_obj_set_size(arc, side, side);
@@ -144,7 +185,7 @@ void pomodoro_init(lv_obj_t* parent) {
     lv_obj_set_style_arc_color(arc, THEME_BAR_BG, LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc, THEME_ACCENT, LV_PART_INDICATOR);
     lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
-    // The ring is decoration; the tap belongs to the overlay underneath it.
+    // The ring is decoration; presses belong to the overlay underneath it.
     lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
 
     mode_lbl = lv_label_create(root);
@@ -166,13 +207,17 @@ void pomodoro_init(lv_obj_t* parent) {
     lv_obj_align(hint_lbl, LV_ALIGN_CENTER, 0, 96);
 }
 
+lv_obj_t* pomodoro_get_root(void) { return root; }
+
 void pomodoro_tick(void) {
     if (!root) return;
 
     const uint8_t q = imu_hal_rotation_quadrant();
-    const int want = (q == QUAD_WORK)  ? MODE_WORK
-                   : (q == QUAD_BREAK) ? MODE_BREAK
-                                       : -1;
+    int want = -1;
+    if (cfg.enabled && !suspended) {
+        if      (q == cfg.focus_quad)             want = MODE_WORK;
+        else if (q == ((cfg.focus_quad + 2) & 3)) want = MODE_BREAK;
+    }
 
     if (want != cur_mode) {
         if (want < 0) leave();
@@ -185,22 +230,22 @@ void pomodoro_tick(void) {
     const uint32_t elapsed = now - last_ms;
     last_ms = now;
 
-    if (!done[cur_mode]) {
-        if (elapsed >= remaining[cur_mode]) {
-            remaining[cur_mode] = 0;
-            done[cur_mode]      = true;
+    if (!done) {
+        if (elapsed >= remaining) {
+            remaining = 0;
+            done      = true;
             Serial.printf("Pomodoro: %s block finished\n",
                           cur_mode == MODE_BREAK ? "break" : "focus");
-            sound_hal_play_reset();     // no-op on boards without a buzzer
+            sound_hal_play_reset();
         } else {
-            remaining[cur_mode] -= elapsed;
+            remaining -= elapsed;
         }
         // A block in progress keeps the panel awake; the idle timer only ever
         // sees touches and buttons otherwise.
         idle_note_activity();
     }
 
-    paint(cur_mode);
+    paint();
 }
 
 bool pomodoro_is_active(void) { return s_active; }

@@ -8,7 +8,7 @@ static const BoardCaps caps = {
     .button_count = 2,      // B and N keys stand in for BOOT + GPIO18
     .has_rotation = false,
     .has_battery = true,    // fake battery, adjustable with -/=
-    .has_imu = false,
+    .has_imu = true,        // fake orientation: SIM_QUADRANT, r key
 };
 
 const BoardCaps& board_caps(void) { return caps; }

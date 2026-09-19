@@ -13,6 +13,8 @@
 //   n (hold)             SECONDARY button (HID Shift+Tab on hardware)
 //   p                    PWR button (short press; hold ~3s + release = pair)
 //   c                    toggle charging       - / =   battery down / up 5%
+//   r                    turn the "device" a quarter clockwise (IMU quadrant)
+//   o                    open the settings page (long press does it too)
 //   s                    save screenshot BMP to the current directory
 //   esc / window close   quit
 //
@@ -23,7 +25,8 @@
 //
 // Headless / CI: SDL_VIDEODRIVER=dummy SIM_AUTOSHOT_MS=<ms> saves a
 // screenshot (SIM_AUTOSHOT_PATH, default sim-autoshot.bmp) after <ms> and
-// exits.
+// exits. SIM_QUADRANT=<0..3> sets the starting orientation, SIM_SETTINGS=1
+// opens the settings page at boot.
 
 #define BOARD_NAME  "Simulator 480x480"
 #define LCD_WIDTH   480
