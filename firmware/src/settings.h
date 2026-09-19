@@ -2,9 +2,9 @@
 #include <lvgl.h>
 #include <stdint.h>
 
-// Settings page, opened by a long press on any screen: the Pomodoro (on/off,
-// lengths, focus side) and sound (volume, end sound, Claude alerts). It
-// scrolls; Done or PWR closes it.
+// Settings page, opened by a long press on any screen (or KEY): tabs for the
+// Pomodoro (on/off, lengths, focus side), sound (volume, end sound, Claude
+// alerts) and buttons. OK, PWR or KEY closes it.
 //
 // Edits apply live and are written to NVS once, on close.
 
@@ -31,8 +31,9 @@ void settings_tick(void);
 void settings_open(void);
 void settings_close(void);
 
-// Scroll the page to y px (the simulator uses it to screenshot the lower half).
-void settings_scroll_to(int y);
+// Jump to a tab (0 Pomodoro, 1 Sound, 2 Buttons); the simulator uses it for
+// headless screenshots.
+void settings_show_tab(int tab);
 
 // splash_tick() stands still while this is up, like for the other overlays.
 bool settings_is_open(void);

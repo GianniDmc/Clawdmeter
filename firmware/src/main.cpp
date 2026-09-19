@@ -28,14 +28,18 @@
 static UsageData usage = {};
 
 // ---- LVGL draw buffers (partial render mode) ----
-// PSRAM-equipped boards (S3) can comfortably hold larger strips. PSRAM-free
-// boards (e.g. ESP32-C6) allocate from internal SRAM, so we shrink the strip
-// — 480×20 RGB565 = 19 KB × 2 buffers = 38 KB, fits beside everything else.
+// PSRAM-equipped boards (S3) can comfortably hold two strips. PSRAM-free
+// boards (e.g. ESP32-C6) allocate from internal SRAM: 38 KB, spent on ONE
+// 480×40 strip rather than two of 20 lines. my_flush_cb() is synchronous, so
+// a second buffer never overlapped anything — one taller strip halves the
+// render/flush passes per frame for the same RAM.
 #ifdef BOARD_HAS_PSRAM
 #define BUF_LINES 40
+#define BUF_COUNT 2
 #define LV_BUF_CAPS (MALLOC_CAP_SPIRAM)
 #else
-#define BUF_LINES 20
+#define BUF_LINES 40
+#define BUF_COUNT 1
 #define LV_BUF_CAPS (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 #endif
 static uint16_t* buf1 = nullptr;
@@ -223,7 +227,7 @@ void setup() {
     lv_tick_set_cb(my_tick);
 
     buf1 = (uint16_t*)heap_caps_malloc(W * BUF_LINES * 2, LV_BUF_CAPS);
-    buf2 = (uint16_t*)heap_caps_malloc(W * BUF_LINES * 2, LV_BUF_CAPS);
+    buf2 = (BUF_COUNT > 1) ? (uint16_t*)heap_caps_malloc(W * BUF_LINES * 2, LV_BUF_CAPS) : nullptr;
 
     lv_display_t* disp = lv_display_create(W, H);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);

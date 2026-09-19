@@ -66,13 +66,13 @@ void sim_pump(void) {
 
     // Headless: SIM_SETTINGS=1 opens the settings page once the UI is up, so
     // an autoshot can capture it.
-    // SIM_SETTINGS=<y> also scrolls the page to y px.
+    // SIM_SETTINGS=<tab> also picks the tab (0 Pomodoro, 1 Sound, 2 Buttons).
     static const char* settings_env = getenv("SIM_SETTINGS");
     static bool settings_armed = settings_env != nullptr;
     if (settings_armed && millis() >= 300) {
         settings_armed = false;
         settings_open();
-        settings_scroll_to(atoi(settings_env));
+        settings_show_tab(atoi(settings_env));
     }
 
     // Headless CI hook: SIM_AUTOSHOT_MS=<ms> → screenshot + exit.

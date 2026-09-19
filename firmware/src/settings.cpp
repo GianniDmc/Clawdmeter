@@ -17,13 +17,16 @@ LV_FONT_DECLARE(font_styrene_16);
 // Geometry tuned for the 480x480 panels; everything hangs off these so a
 // smaller board only needs different numbers.
 #define PAD_X      36
-#define TOP_Y      24
-#define ROW_STEP   68
+#define TAB_Y      18
+#define TAB_H      52
+#define TAB_GAP    6
+#define TAB_PAD_X  20     // same corner clearance as the rest of the UI
+#define PAGE_Y     (TAB_Y + TAB_H + 16)
+#define ROW_STEP   64
 #define ROW_H      56
 #define STEP_W     60      // the - and + buttons
 #define VALUE_W    118
 #define TOGGLE_W   120
-#define SECTION_GAP 28
 
 #define FOCUS_STEP_MIN   5
 #define BREAK_STEP_MIN   1
@@ -36,6 +39,14 @@ static SoundConfig snd = { 60, SOUND_CHIME, true };
 static bool buttons_to_host = false;
 
 static lv_obj_t* root       = nullptr;
+static lv_obj_t* page       = nullptr;     // container the make_* helpers build into
+
+enum { TAB_POMODORO, TAB_SOUND, TAB_BUTTONS, TAB_COUNT };
+static const char* const TAB_NAMES[TAB_COUNT] = { "Pomodoro", "Sound", "Buttons" };
+static const int16_t     TAB_W[TAB_COUNT]     = { 132, 92, 106 };    // + OK fills the row
+static lv_obj_t* pages[TAB_COUNT];
+static lv_obj_t* tabs[TAB_COUNT];
+static int       cur_tab = TAB_POMODORO;
 static lv_obj_t* pomo_btn   = nullptr;
 static lv_obj_t* pomo_lbl   = nullptr;
 static lv_obj_t* alert_btn  = nullptr;
@@ -90,7 +101,7 @@ bool settings_buttons_to_host(void) { return buttons_to_host || !root; }
 
 static lv_obj_t* make_button(int x, int y, int w, int h, const char* text,
                              const lv_font_t* font, lv_obj_t** out_label) {
-    lv_obj_t* b = lv_obj_create(root);
+    lv_obj_t* b = lv_obj_create(page);
     lv_obj_set_pos(b, x, y);
     lv_obj_set_size(b, w, h);
     lv_obj_set_style_bg_color(b, THEME_PANEL, 0);
@@ -100,8 +111,6 @@ static lv_obj_t* make_button(int x, int y, int w, int h, const char* text,
     lv_obj_set_style_border_width(b, 0, 0);
     lv_obj_set_style_pad_all(b, 0, 0);
     lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-    // Let a drag that starts on a button scroll the page.
-    lv_obj_add_flag(b, LV_OBJ_FLAG_SCROLL_CHAIN);
 
     lv_obj_t* l = lv_label_create(b);
     lv_obj_set_style_text_font(l, font, 0);
@@ -112,16 +121,8 @@ static lv_obj_t* make_button(int x, int y, int w, int h, const char* text,
     return b;
 }
 
-static void make_heading(int y, const char* text) {
-    lv_obj_t* l = lv_label_create(root);
-    lv_obj_set_style_text_font(l, &font_tiempos_34, 0);
-    lv_obj_set_style_text_color(l, THEME_TEXT, 0);
-    lv_label_set_text(l, text);
-    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
-}
-
 static void make_row_label(int y, const char* text) {
-    lv_obj_t* l = lv_label_create(root);
+    lv_obj_t* l = lv_label_create(page);
     lv_obj_set_style_text_font(l, &font_styrene_28, 0);
     lv_obj_set_style_text_color(l, THEME_TEXT, 0);
     lv_label_set_text(l, text);
@@ -222,9 +223,7 @@ static void make_stepper(int y, int field, const char* minus_txt, const char* pl
 
     lv_obj_t* minus = make_button(minus_x, y, STEP_W, ROW_H, minus_txt, &font_styrene_28, nullptr);
     lv_obj_t* plus  = make_button(plus_x,  y, STEP_W, ROW_H, plus_txt,  &font_styrene_28, nullptr);
-    // SHORT_CLICKED rather than PRESSED: the page scrolls, and a drag that
-    // happens to start on a button must not change the value. Holding steps
-    // repeatedly.
+    // SHORT_CLICKED rather than PRESSED so a long press can repeat instead.
     lv_obj_add_event_cb(minus, step_cb, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)((field << 1) | 0));
     lv_obj_add_event_cb(plus,  step_cb, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)((field << 1) | 1));
     if (repeat) {
@@ -235,7 +234,7 @@ static void make_stepper(int y, int field, const char* minus_txt, const char* pl
         }
     }
 
-    lv_obj_t* v = lv_label_create(root);
+    lv_obj_t* v = lv_label_create(page);
     lv_obj_set_width(v, VALUE_W);
     lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(v, &font_styrene_24, 0);
@@ -252,6 +251,48 @@ static lv_obj_t* make_toggle(int y, lv_event_cb_t cb, lv_obj_t** out_label) {
 }
 
 // ---- Page --------------------------------------------------------------------
+// Tabs, not one long scrolling page: the C6 has to repaint the whole panel for
+// every scrolled frame and managed ~10 fps. A tab switch is one repaint.
+
+static lv_obj_t* make_hint(int y, const char* text) {
+    lv_obj_t* l = lv_label_create(page);
+    lv_obj_set_width(l, board_caps().width - 2 * PAD_X);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(l, &font_styrene_16, 0);
+    lv_obj_set_style_text_color(l, THEME_DIM, 0);
+    lv_label_set_text(l, text);
+    lv_obj_set_pos(l, PAD_X, y);
+    return l;
+}
+
+static void show_tab(int t) {
+    cur_tab = t;
+    for (int i = 0; i < TAB_COUNT; i++) {
+        const bool on = (i == t);
+        if (on) lv_obj_clear_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+        else    lv_obj_add_flag(pages[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(tabs[i], on ? THEME_BAR_BG : THEME_BG, 0);
+        lv_obj_set_style_text_color(lv_obj_get_child(tabs[i], 0), on ? THEME_TEXT : THEME_DIM, 0);
+    }
+}
+
+static void tab_cb(lv_event_t* e) {
+    show_tab((int)(uintptr_t)lv_event_get_user_data(e));
+}
+
+static lv_obj_t* make_page(void) {
+    const BoardCaps& c = board_caps();
+    lv_obj_t* p = lv_obj_create(root);
+    lv_obj_set_pos(p, 0, PAGE_Y);
+    lv_obj_set_size(p, c.width, c.height - PAGE_Y);
+    lv_obj_set_style_bg_opa(p, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(p, 0, 0);
+    lv_obj_set_style_pad_all(p, 0, 0);
+    lv_obj_set_style_radius(p, 0, 0);
+    lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(p, LV_OBJ_FLAG_HIDDEN);
+    return p;
+}
 
 void settings_init(lv_obj_t* parent) {
     const BoardCaps& c = board_caps();
@@ -265,98 +306,75 @@ void settings_init(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(root, 0, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_set_style_pad_bottom(root, 28, 0);
     lv_obj_set_style_radius(root, 0, 0);
-    lv_obj_set_scroll_dir(root, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(root, LV_OBJ_FLAG_HIDDEN);
 
+    // Tab row: three tabs, then OK filling what is left.
+    page = root;
+    int x = TAB_PAD_X;
+    for (int i = 0; i < TAB_COUNT; i++) {
+        tabs[i] = make_button(x, TAB_Y, TAB_W[i], TAB_H, TAB_NAMES[i], &font_styrene_24, nullptr);
+        lv_obj_add_event_cb(tabs[i], tab_cb, LV_EVENT_SHORT_CLICKED, (void*)(uintptr_t)i);
+        x += TAB_W[i] + TAB_GAP;
+    }
+    lv_obj_t* ok = make_button(x, TAB_Y, c.width - TAB_PAD_X - x, TAB_H, "OK", &font_styrene_24, nullptr);
+    lv_obj_set_style_bg_color(ok, THEME_ACCENT, 0);
+    lv_obj_add_event_cb(ok, done_cb, LV_EVENT_SHORT_CLICKED, NULL);
+
     const int content_w = c.width - 2 * PAD_X;
-    int y = TOP_Y;
+    int y;
 
-    make_heading(y, "Pomodoro");
-    y += 60;
-
+    // -- Pomodoro
+    page = pages[TAB_POMODORO] = make_page();
+    y = 0;
     make_row_label(y, "Enabled");
     pomo_btn = make_toggle(y, pomo_toggle_cb, &pomo_lbl);
     y += ROW_STEP;
-
     make_row_label(y, "Focus");
     make_stepper(y, FIELD_FOCUS, "-", "+", true, &focus_val);
     y += ROW_STEP;
-
     make_row_label(y, "Break");
     make_stepper(y, FIELD_BREAK, "-", "+", true, &break_val);
     y += ROW_STEP;
-
     make_row_label(y, "Long");
     make_stepper(y, FIELD_LONG, "-", "+", true, &long_val);
     y += ROW_H + 4;
-
-    lv_obj_t* long_hint = lv_label_create(root);
-    lv_obj_set_style_text_font(long_hint, &font_styrene_16, 0);
-    lv_obj_set_style_text_color(long_hint, THEME_DIM, 0);
+    lv_obj_t* long_hint = make_hint(y, "");
     lv_label_set_text_fmt(long_hint, "Long break after every %d focus blocks", POMODORO_CYCLE);
-    lv_obj_set_pos(long_hint, PAD_X, y);
-    y += 36;
-
+    y += 30;
     lv_obj_t* side = make_button(PAD_X, y, content_w, ROW_H,
                                  "Use this side for focus", &font_styrene_24, nullptr);
     lv_obj_add_event_cb(side, side_cb, LV_EVENT_SHORT_CLICKED, NULL);
-    y += ROW_H + 10;
-
-    side_hint = lv_label_create(root);
-    lv_obj_set_width(side_hint, content_w);
+    y += ROW_H + 8;
+    side_hint = make_hint(y, "");
     lv_obj_set_style_text_align(side_hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(side_hint, &font_styrene_16, 0);
-    lv_obj_set_style_text_color(side_hint, THEME_DIM, 0);
-    lv_label_set_text(side_hint, "");
-    lv_obj_set_pos(side_hint, PAD_X, y);
-    y += 24 + SECTION_GAP;
 
-    make_heading(y, "Sound");
-    y += 60;
-
+    // -- Sound
+    page = pages[TAB_SOUND] = make_page();
+    y = 0;
     make_row_label(y, "Volume");
     make_stepper(y, FIELD_VOLUME, "-", "+", false, &volume_val);
     y += ROW_STEP;
-
     make_row_label(y, "End");
     make_stepper(y, FIELD_SOUND, "<", ">", false, &sound_val);
     y += ROW_STEP;
-
     make_row_label(y, "Claude");
     alert_btn = make_toggle(y, alert_toggle_cb, &alert_lbl);
     y += ROW_H + 4;
+    make_hint(y, "Sound when Claude Code needs you or is done");
 
-    lv_obj_t* alert_hint = lv_label_create(root);
-    lv_obj_set_style_text_font(alert_hint, &font_styrene_16, 0);
-    lv_obj_set_style_text_color(alert_hint, THEME_DIM, 0);
-    lv_label_set_text(alert_hint, "Sound when Claude Code needs you or is done");
-    lv_obj_set_pos(alert_hint, PAD_X, y);
-    y += 24 + SECTION_GAP;
-
-    make_heading(y, "Buttons");
-    y += 60;
-
+    // -- Buttons
+    page = pages[TAB_BUTTONS] = make_page();
+    y = 0;
     make_row_label(y, "To the Mac");
     host_btn = make_toggle(y, host_toggle_cb, &host_lbl);
     y += ROW_H + 4;
+    make_hint(y, "On: Space and Shift+Tab for Claude Code.\n"
+                 "Off: BOOT switches screens, KEY opens settings.");
 
-    lv_obj_t* host_hint = lv_label_create(root);
-    lv_obj_set_width(host_hint, content_w);
-    lv_label_set_long_mode(host_hint, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(host_hint, &font_styrene_16, 0);
-    lv_obj_set_style_text_color(host_hint, THEME_DIM, 0);
-    lv_label_set_text(host_hint, "On: Space and Shift+Tab for Claude Code.\n"
-                                 "Off: BOOT switches screens, KEY opens settings.");
-    lv_obj_set_pos(host_hint, PAD_X, y);
-    y += 48 + SECTION_GAP;
-
-    lv_obj_t* done = make_button((c.width - 200) / 2, y, 200, ROW_H,
-                                 "Done", &font_styrene_24, nullptr);
-    lv_obj_set_style_bg_color(done, THEME_ACCENT, 0);
-    lv_obj_add_event_cb(done, done_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    page = nullptr;
+    show_tab(TAB_POMODORO);
 }
 
 void settings_tick(void) {
@@ -379,7 +397,6 @@ void settings_open(void) {
     if (!root || s_open) return;
     pomodoro_set_suspended(true);
     refresh();
-    lv_obj_scroll_to_y(root, 0, LV_ANIM_OFF);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(root);
     s_open = true;
@@ -400,6 +417,6 @@ void settings_close(void) {
 
 bool settings_is_open(void) { return s_open; }
 
-void settings_scroll_to(int y) {
-    if (root) lv_obj_scroll_to_y(root, y, LV_ANIM_OFF);
+void settings_show_tab(int tab) {
+    if (root && tab >= 0 && tab < TAB_COUNT) show_tab(tab);
 }
