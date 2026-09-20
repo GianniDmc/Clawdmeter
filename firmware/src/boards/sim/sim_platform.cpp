@@ -101,6 +101,19 @@ void sim_pump(void) {
         }
     }
 
+    // SIM_NEXT_MS=<ms>[,<ms>...] taps "next screen" at each of those times, to
+    // check headlessly which pages the rotation actually stops on.
+    static const char* next_env = getenv("SIM_NEXT_MS");
+    static const char* next_at = next_env;
+    if (next_at && *next_at) {
+        if (millis() >= (uint32_t)atol(next_at)) {
+            ui_next_screen();
+            printf("[sim] next screen -> %d\n", (int)ui_get_current_screen());
+            const char* comma = strchr(next_at, ',');
+            next_at = comma ? comma + 1 : nullptr;
+        }
+    }
+
     // SIM_SCREEN=<n> shows screen n (see screen_t) once the UI is up.
     static const char* screen_env = getenv("SIM_SCREEN");
     static bool screen_armed = screen_env != nullptr;

@@ -901,13 +901,22 @@ void ui_toggle_splash(void) {
     else                                  ui_show_screen(SCREEN_SPLASH);
 }
 
+// Is this page worth stopping on? A page that never received anything is
+// skipped — except the usage page, which also carries the pairing hint and
+// the idle screen, so it only steps aside once another tool is feeding the
+// device (someone who runs Codex alone should not walk past an empty Claude
+// page, but must still be able to pair).
+static bool screen_has_data(screen_t s) {
+    if (s != SCREEN_USAGE) return tool_screens_has_data(s);
+    if (data_received || !s_ble_connected) return true;
+    return !(tool_screens_has_data(SCREEN_CODEX) || tool_screens_has_data(SCREEN_COPILOT));
+}
+
 void ui_next_screen(void) {
-    // Walk past the tool pages that have never received data: a Codex page
-    // reading "--% left" is worse than not being in the rotation at all.
     screen_t next = current_screen;
     for (int i = 0; i < SCREEN_COUNT; i++) {
         next = (screen_t)((next + 1) % SCREEN_COUNT);
-        if (tool_screens_has_data(next)) break;
+        if (screen_has_data(next)) break;
     }
     ui_show_screen(next);
 }
