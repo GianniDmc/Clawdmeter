@@ -12,12 +12,24 @@ Shift+Tab over BLE HID for Claude Code's voice mode and mode-toggle shortcuts.
 
 ## Screens
 
-The device boots into the splash. Tap the screen anywhere to switch to the Usage view; tap again to flip back to the splash.
+The device boots into the splash. Tap the screen anywhere to walk through the
+pages; hold a tap to open the settings. Pages that never received data are
+skipped, so a setup without Codex or Copilot keeps the two-page rotation.
 
 |              Splash               |              Usage              |
 | :-------------------------------: | :-----------------------------: |
 | ![Splash](screenshots/splash.gif) | ![Usage](screenshots/usage.png) |
 |   Splash; touch-toggle anytime    | Session and weekly utilization  |
+
+| Page        | Shows                                                                   |
+| ----------- | ----------------------------------------------------------------------- |
+| **Splash**  | Clawd, animated by how fast you are burning through the session limit    |
+| **Usage**   | Claude Code's 5-hour and weekly limits, the clock, the battery, and what Claude Code is doing right now |
+| **Codex**   | Codex's 5-hour and weekly limits as "% left", terminal-styled            |
+| **Copilot** | GitHub Copilot AI credits today and month-to-date, plus the month as a contribution-style calendar |
+
+Each page is dressed like its own tool, and each layout is derived from the
+panel size, so the same pages fit a 480x480, a 368x448 or a 240x240 board.
 
 While the splash is up, the middle (PWR) button cycles animations. **Hold the power button for 3 seconds, then release, to put the device into pairing mode** — this clears the saved Bluetooth bond and re-advertises. The firmware also auto-rotates animations every 20 s within the current usage-rate group, so a long stretch on the splash isn't just one Clawd on loop.
 
@@ -201,15 +213,47 @@ reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Clawdmeter /f
 
 ## Physical buttons
 
-The board has three side buttons. Left and right send HID keys; the middle (PWR) button cycles splash animations and, held for 3 seconds, triggers pairing mode.
+The board has three side buttons. What the outer two do depends on the
+**Buttons** tab in the settings ("To the Mac", off by default):
 
-| Button           | GPIO         | Function                                                     |
-| ---------------- | ------------ | ------------------------------------------------------------ |
-| **Left**         | GPIO 0       | Hold to send Space (Claude Code voice-mode push-to-talk)     |
-| **Middle** (PWR) | AXP2101 PKEY | On splash: cycle animations. Hold 3s + release: pairing mode |
-| **Right**        | GPIO 18      | Press to send Shift+Tab (Claude Code mode toggle)            |
+| Button           | GPIO         | To the Mac: off (default)          | To the Mac: on                        |
+| ---------------- | ------------ | ---------------------------------- | ------------------------------------- |
+| **Left** (BOOT)  | GPIO 0       | Next page                          | Hold to send Space (voice-mode PTT)   |
+| **Middle** (PWR) | AXP2101 PKEY | Settings out, restart the Pomodoro, or cycle animations / brightness | Same |
+| **Right** (KEY)  | GPIO 18      | Open the settings                  | Send Shift+Tab (Claude Code mode toggle) |
 
-Space and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in whatever window has focus on the paired host — not just Claude Code.
+Held 3 seconds and released, the middle button triggers pairing mode. Space
+and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in
+whatever window has focus on the paired host — not just Claude Code.
+
+## Pomodoro
+
+Turn the device on its side and a Pomodoro block starts: the side clockwise
+from the button edge is focus, the opposite side is the break. Turning it
+back upright leaves the timer; every landing starts a fresh block, so the
+timer never resumes mid-way. Four focus blocks earn the long break.
+
+Durations, the focus side and the whole feature's on/off switch live in the
+settings' **Pomodoro** tab. While a block runs, the device never steals the
+screen: a tool that needs you says so under the timer ("Codex needs you"), and
+one that just finished is named in green for a minute.
+
+## Live tool state
+
+With its hooks installed, the device mirrors what each assistant is doing:
+working, waiting on you, or done. Waiting plays an alert, wakes the panel and
+brings that tool's page up, then goes back to where you were once you answer.
+Sounds and the alert toggle are in the settings' **Sound** tab.
+
+| Tool            | How it reports        | Install                                                  |
+| --------------- | --------------------- | -------------------------------------------------------- |
+| **Claude Code** | hooks                 | merge `daemon/claude-hooks.example.json` into `~/.claude/settings.json` |
+| **Codex**       | hooks                 | merge `daemon/codex-hooks.example.json` into `~/.codex/hooks.json`, then approve them in Codex's Hooks settings |
+| **OpenCode**    | plugin (covers OpenChamber) | see `daemon/opencode/README.md`                    |
+
+The hooks write one small file per session under
+`~/.config/claude-usage-monitor/claude-state/`; the daemon folds them into one
+state per tool and sends it to the device. Nothing leaves the machine.
 
 ## BLE protocol
 
@@ -229,6 +273,20 @@ JSON payload format (written to RX):
 ```
 
 Fields: `s` = session %, `sr` = session reset (minutes), `w` = weekly %, `wr` = weekly reset (minutes), `st` = status, `ok` = success flag.
+
+`cc` rides along on that payload when Claude Code's hooks are installed:
+`"work"`, `"wait"` or `"done"`. The other tools get their own small messages,
+tagged by a `k` field so the firmware routes them apart from the usage parser:
+
+| `k`     | Payload                                                     |
+| ------- | ----------------------------------------------------------- |
+| `cx`    | Codex: `p`/`pr` 5-hour % used and reset, `w`/`wr` weekly, `st` state |
+| `cp`    | Copilot: `tc`/`td` credits and prompts today, `mc`/`md` month-to-date |
+| `cpg`   | Copilot calendar: `mo` month, `wd` weekday of the 1st, `dim` days in month, `d` credits per day |
+| `ocs`   | OpenCode: `st` state, shown on the Copilot page              |
+
+Each message is written separately and stays well under one BLE write; the
+firmware queues incoming writes so back-to-back messages are never dropped.
 
 ## Development
 

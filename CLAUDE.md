@@ -96,6 +96,12 @@ firmware/src/
   main.cpp                  — setup() + loop(): HAL calls only, zero #ifdef BOARD_*
   ui.{h,cpp}                — 3-screen UI (splash, usage, bluetooth). compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
   splash.{h,cpp}            — 20×20 pixel-art engine. CELL = min(W,H)/20, centered.
+  tool_screens.{h,cpp}      — Codex and Copilot pages, each in its tool's style; layout from board_caps()
+  claude_state.{h,cpp}      — what Claude Code is doing ("cc"), turned into Clawd's animation, a sound and a wake-up
+  pomodoro.{h,cpp}          — orientation-driven timer: focus on one side, break on the opposite one
+  settings.{h,cpp}          — tabbed settings (Pomodoro / Sound / Buttons), stored in NVS "clawdmeter"
+  chime.{h,cpp}             — integer wavetable synth + a queue-fed player task (no FPU on the C6)
+  hal/sound_hal.h           — sound_hal_play(SOUND_*) / set_volume, weak no-ops for boards without audio
   ble.{h,cpp}               — NimBLE peripheral: custom data service + HID keyboard
   data.h                    — UsageData struct
   icons.h                   — icon arrays. Battery (5×) are RGB565A8 with alpha; rest are raw RGB565.
@@ -181,6 +187,20 @@ The boot screen is `SCREEN_SPLASH` and only advances on a physical button press,
 11. **LCD-4 RGB bounce buffers.** `Arduino_RGB_Display` DMA-scans PSRAM. Pass `bounce_buffer_size_px = LCD_WIDTH * 10` so ESP-IDF allocates SRAM bounce buffers. Do not call `rgbpanel->getFrameBuffer()` after `gfx->begin()` — it constructs a second RGB panel and crashes.
 12. **LCD-4 has only one user button (GPIO 0 / BOOT).** GPIO 18 is display R3. KEY/PWR is EN/RST (hardware reset). Hold-to-pair and PWR-short animation/brightness cycling are unavailable; tap the panel to toggle splash ↔ usage.
 
+## Live tool state and the tool pages
+
+The usage page's status line, the Codex page and the Copilot page all mirror
+one three-value state per tool — `work` / `wait` / `done` — delivered by the
+daemon (see "Daemon / host side"). `wait` is the only one that interrupts:
+alert sound, `idle_note_activity()` to wake the panel, and a switch to that
+tool's page, which is restored to the previous screen once the state clears.
+Both are suppressed while the Pomodoro or the settings are up — there the
+timer's hint line carries it instead. The Done sound is the one picked in the
+settings (shared with the Pomodoro); the alert is fixed so it stays
+recognizable. Animations named in `claude_state.cpp` ("laptop", "waving",
+"jumping happy") are kept out of `splash.cpp`'s usage-rate rotation, or Clawd
+would look busy while Claude is idle.
+
 ## Icons
 
 `tools/png_to_lvgl.js <input.png> <symbol> [W_MACRO] [H_MACRO] [--tint=RRGGBB | --no-tint]` converts an alpha PNG to RGB565A8. Default tint is white (`0xFFFFFF`) — necessary for Lucide PNGs. Splice output into `firmware/src/icons.h` and use `init_icon_dsc_rgb565a8()` in ui.cpp. Currently only the 5 battery icons use this format; the rest are still raw RGB565 baked over the panel background, fine because they live inside opaque zones.
@@ -248,7 +268,32 @@ See `~/.claude/projects/.../memory/` files for persistent context (user is an em
 
 ## Daemon / host side
 
-Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic API, sends JSON over BLE GATT. Run with `systemctl --user start claude-usage-daemon`. The unit file's `ExecStart` is the absolute path to the script — repoint it when switching between the worktree and the main checkout.
+Two daemons, same GATT protocol: `daemon/claude-usage-daemon.sh` (bash, Linux,
+`systemctl --user start claude-usage-daemon` — the unit file's `ExecStart` is an
+absolute path, repoint it when switching between the worktree and the main
+checkout) and `daemon/claude_usage_daemon.py` (Python + bleak, macOS and
+Windows; on macOS it runs as the launchd agent `com.user.claude-usage-daemon`,
+logs to `~/Library/Logs/claude-usage-daemon.out.log`). Both read the Claude Code
+OAuth token, poll the Anthropic API and write JSON over BLE.
+
+The Python daemon also carries the other tools (`daemon/tool_usage.py`):
+
+- **Live state.** `daemon/claude_state_hook.py` is registered as a Claude Code
+  hook (`daemon/claude-hooks.example.json`) and a Codex hook
+  (`daemon/codex-hooks.example.json`, which Codex only runs once approved in
+  its Hooks settings); `daemon/opencode/clawdmeter.js` is the OpenCode plugin,
+  which covers OpenChamber too. Each writes `{"state": ..., "ts": ...}` per
+  session under `~/.config/claude-usage-monitor/claude-state/` (`codex/` and
+  `opencode/` subdirectories); the daemon folds them with wait > work > done
+  and a per-state TTL, then sends `cc` / `cx` / `ocs`.
+- **Codex limits** come from the last `rate_limits` line of the newest
+  `~/.codex/sessions/**/rollout-*.jsonl`.
+- **Copilot credits** are priced from OpenCode's own token counts with GitHub's
+  published rates in `daemon/copilot_rates.json` (long-context tiers and
+  promotions included — list prices alone ran 6 % high in September 2026, when
+  GPT-5.6 Sol was half price until the 3rd). Days already over are cached and
+  only today is re-read per poll. The Copilot app/CLI's `total_nano_aiu` is
+  added straight from its own database.
 
 **Discovery & resilience:**
 
