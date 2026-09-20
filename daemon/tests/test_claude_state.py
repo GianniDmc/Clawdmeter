@@ -4,11 +4,13 @@
 Run: python -m pytest daemon/tests/test_claude_state.py -x -q
 """
 import json
+import os
 import time
 
 from daemon.claude_state_hook import record, state_for
-from daemon.claude_usage_daemon import (opencode_payload, other_tool_payloads,
-                                        read_claude_state)
+from daemon.claude_usage_daemon import (claim_single_instance, opencode_payload,
+                                        other_tool_payloads, read_claude_state,
+                                        was_interrupted)
 
 
 def ev(name, **kw):
@@ -123,3 +125,50 @@ def test_opencode_state_folds_the_plugin_files(tmp_path):
     (tmp_path / "a.json").write_text(json.dumps({"state": "work", "ts": time.time()}))
     (tmp_path / "b.json").write_text(json.dumps({"state": "wait", "ts": time.time()}))
     assert read_claude_state(tmp_path) == "wait"
+
+
+def _transcript(path, *lines):
+    path.write_text("\n".join(json.dumps(l) for l in lines) + "\n")
+    return path
+
+
+def test_escape_clears_the_work_state(tmp_path):
+    # Claude Code fires no hook on Escape, so the daemon reads the
+    # interruption from the transcript instead of showing "work" for 15 min.
+    tr = _transcript(tmp_path / "t.jsonl",
+                     {"type": "assistant", "message": {"content": "working"}},
+                     {"type": "user", "message": {"content": [
+                         {"type": "text", "text": "[Request interrupted by user]"}]}})
+    now = time.time()
+    (tmp_path / "s.json").write_text(json.dumps(
+        {"state": "work", "ts": now, "transcript": str(tr)}))
+    assert read_claude_state(tmp_path, now=now) == ""
+    assert not (tmp_path / "s.json").exists()      # and the file is cleaned up
+
+
+def test_a_live_turn_survives(tmp_path):
+    tr = _transcript(tmp_path / "t.jsonl",
+                     {"type": "user", "message": {"content": "go"}},
+                     {"type": "assistant", "message": {"content": "on it"}})
+    now = time.time()
+    (tmp_path / "s.json").write_text(json.dumps(
+        {"state": "work", "ts": now, "transcript": str(tr)}))
+    assert read_claude_state(tmp_path, now=now) == "work"
+
+
+def test_interruption_older_than_the_state_is_ignored(tmp_path):
+    # An interruption from an earlier turn must not cancel a fresh "work".
+    tr = _transcript(tmp_path / "t.jsonl",
+                     {"type": "user", "message": {"content": [
+                         {"type": "text", "text": "[Request interrupted by user]"}]}})
+    os.utime(tr, (time.time() - 600, time.time() - 600))
+    assert not was_interrupted(str(tr), time.time())
+
+
+def test_second_daemon_does_not_get_the_lock(tmp_path):
+    lock = tmp_path / "daemon.lock"
+    first = claim_single_instance(lock)
+    assert first is not None
+    assert claim_single_instance(lock) is None     # the second one steps aside
+    first.close()
+    assert claim_single_instance(lock) is not None  # freed once it exits

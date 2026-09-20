@@ -51,6 +51,9 @@ CLAUDE_STATE_DIR = Path.home() / ".config" / "claude-usage-monitor" / "claude-st
 # The OpenCode plugin (daemon/opencode/clawdmeter.js) writes here.
 OPENCODE_STATE_DIR = CLAUDE_STATE_DIR / "opencode"
 CONFIG_FILE = Path.home() / ".config" / "claude-usage-monitor" / "config"
+# Only one daemon may hold the device: two of them fight over the BLE link and
+# the screen flickers between their payloads.
+LOCK_FILE = Path.home() / ".config" / "claude-usage-monitor" / "daemon.lock"
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_HEADERS_TEMPLATE = {
@@ -427,6 +430,39 @@ CLAUDE_STATE_TTL = {"wait": 30 * 60, "work": 15 * 60, "done": 45}
 CLAUDE_STATE_PRIORITY = ("wait", "work", "done")
 
 
+# The line Claude Code writes to the transcript when the user hits Escape.
+INTERRUPT_MARKER = "Request interrupted by user"
+
+
+def was_interrupted(transcript: str, ts: float) -> bool:
+    """True when the session's transcript ends on a user interruption.
+
+    Escape produces no hook event, so a "work" state would otherwise sit on
+    the device for its full 15-minute time-to-live. The transcript does record
+    it, as a user entry reading "[Request interrupted by user]".
+    """
+    try:
+        path = Path(transcript)
+        if path.stat().st_mtime + 1 < ts:
+            return False            # nothing written since that state
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 64 * 1024))
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in reversed(tail.splitlines()):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue            # the first line of the tail may be cut
+        if entry.get("type") not in ("user", "assistant"):
+            continue
+        return INTERRUPT_MARKER in json.dumps(entry.get("message", ""))
+    return False
+
+
 def read_claude_state(state_dir: Path | None = None, now: float | None = None) -> str:
     """Fold every session's hook state into one: "wait" > "work" > "done" > ""."""
     state_dir = CLAUDE_STATE_DIR if state_dir is None else state_dir
@@ -444,6 +480,10 @@ def read_claude_state(state_dir: Path | None = None, now: float | None = None) -
             continue
         ttl = CLAUDE_STATE_TTL.get(state)
         if ttl is None:
+            continue
+        transcript = entry.get("transcript")
+        if state == "work" and transcript and was_interrupted(transcript, ts):
+            f.unlink(missing_ok=True)   # the user stopped it: nothing is going on
             continue
         if now - ts <= ttl:
             live.add(state)
@@ -972,7 +1012,41 @@ async def main() -> None:
             backoff = 1
 
 
+def claim_single_instance(lock_file: Path = LOCK_FILE):
+    """Take the daemon lock, or return None when another one already holds it.
+
+    The returned handle must stay open for the process's lifetime; closing it
+    (or exiting) releases the lock. Windows and any platform without fcntl get
+    a free pass rather than a crash.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return True        # not POSIX: nothing to enforce with
+    try:
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_file.open("a+")
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return None
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    return handle
+
+
 if __name__ == "__main__":
+    _lock = claim_single_instance()
+    if _lock is None:
+        try:
+            other = LOCK_FILE.read_text().strip()
+        except OSError:
+            other = "?"
+        log(f"Another daemon already holds the device (pid {other}) — exiting. "
+            f"Stop it first, or use it: launchctl kickstart -k "
+            f"gui/$(id -u)/com.user.claude-usage-daemon")
+        sys.exit(0)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

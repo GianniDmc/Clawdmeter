@@ -76,7 +76,13 @@ def record(event: dict, state_dir: Path = STATE_DIR, now: float | None = None) -
         return
 
     state_dir.mkdir(parents=True, exist_ok=True)
-    body = json.dumps({"state": state, "ts": time.time() if now is None else now})
+    entry = {"state": state, "ts": time.time() if now is None else now}
+    # Claude Code sends no hook when the user hits Escape; the daemon reads the
+    # interruption out of the transcript instead, so record where it is.
+    transcript = event.get("transcript_path")
+    if transcript:
+        entry["transcript"] = str(transcript)
+    body = json.dumps(entry)
     # Atomic replace, so the daemon never reads a half-written file.
     fd, tmp = tempfile.mkstemp(dir=state_dir, prefix=".tmp-")
     with os.fdopen(fd, "w") as f:
