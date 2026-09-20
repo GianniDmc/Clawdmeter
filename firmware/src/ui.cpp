@@ -209,7 +209,7 @@ static uint32_t clock_base_ms = 0;
 static int      clock_fmt = 24;   // 12 or 24, set from the daemon payload
 static int      clock_last_min = -1;   // last rendered minute; avoids redrawing the title every tick
 static lv_obj_t* usage_group;   // the two usage panels — shown when connected
-static lv_obj_t* pair_group;    // pairing hint — shown when disconnected
+static lv_obj_t* pair_page;     // its own screen: the link is down
 static lv_obj_t* bar_session;
 static lv_obj_t* lbl_session_pct;
 static lv_obj_t* lbl_session_label;
@@ -325,6 +325,7 @@ static void format_reset_time(int mins, char* buf, size_t len) {
 static void global_click_cb(lv_event_t* e);
 static void long_press_cb(lv_event_t* e);
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
+static screen_t before_pair_screen = SCREEN_SPLASH;   // where to return once linked again
 
 static lv_obj_t* make_panel(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_t* panel = lv_obj_create(parent);
@@ -509,40 +510,50 @@ static void paint_pair_hint(void) {
     }
 }
 
-static void build_pair_group(lv_obj_t* parent) {
-    pair_group = lv_obj_create(parent);
-    lv_obj_set_size(pair_group, L.scr_w, L.scr_h - L.content_y);
-    lv_obj_set_pos(pair_group, 0, L.content_y);
-    lv_obj_set_style_bg_opa(pair_group, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(pair_group, 0, 0);
-    lv_obj_set_style_pad_all(pair_group, 0, 0);
-    lv_obj_clear_flag(pair_group, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_EVENT_BUBBLE);
+// The link being down is not Claude's business, so it gets its own screen:
+// it appears by itself when the connection drops, steps out of the rotation
+// once it is back, and reads the same on a Codex-only device.
+static void build_pair_page(lv_obj_t* parent) {
+    pair_page = lv_obj_create(parent);
+    lv_obj_set_size(pair_page, L.scr_w, L.scr_h);
+    lv_obj_set_pos(pair_page, 0, 0);
+    lv_obj_set_style_bg_opa(pair_page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pair_page, 0, 0);
+    lv_obj_set_style_pad_all(pair_page, 0, 0);
+    lv_obj_clear_flag(pair_page, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(pair_page, global_click_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(pair_page, long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
+
+    lv_obj_t* head = lv_label_create(pair_page);
+    lv_label_set_text(head, "Bluetooth");
+    lv_obj_set_style_text_font(head, L.pace_font, 0);
+    lv_obj_set_style_text_color(head, COL_DIM, 0);
+    lv_obj_align(head, LV_ALIGN_TOP_MID, 0, L.title_y);
 
     // The name to look for on the host, then what to do — which differs
     // between a first pairing and a device that is simply waiting for its
     // daemon to come back.
-    pair_name = lv_label_create(pair_group);
+    pair_name = lv_label_create(pair_page);
     lv_label_set_text(pair_name, "Clawdmeter");
     lv_obj_set_style_text_font(pair_name, L.bt_status_font, 0);
     lv_obj_set_style_text_color(pair_name, COL_TEXT, 0);
-    lv_obj_align(pair_name, LV_ALIGN_TOP_MID, 0, L.pair_y1);
+    lv_obj_align(pair_name, LV_ALIGN_TOP_MID, 0, L.content_y + L.pair_y1);
 
-    pair_line1 = lv_label_create(pair_group);
+    pair_line1 = lv_label_create(pair_page);
     lv_label_set_text(pair_line1, "");
     lv_obj_set_style_text_font(pair_line1, L.bt_device_font, 0);
     lv_obj_set_style_text_color(pair_line1, COL_ACCENT, 0);
-    lv_obj_align(pair_line1, LV_ALIGN_TOP_MID, 0, L.pair_y2);
+    lv_obj_align(pair_line1, LV_ALIGN_TOP_MID, 0, L.content_y + L.pair_y2);
 
-    pair_line2 = lv_label_create(pair_group);
+    pair_line2 = lv_label_create(pair_page);
     lv_label_set_text(pair_line2, "");
     lv_obj_set_style_text_font(pair_line2, L.bt_device_font, 0);
     lv_obj_set_style_text_color(pair_line2, COL_DIM, 0);
     lv_obj_set_style_text_align(pair_line2, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pair_line2, LV_ALIGN_TOP_MID, 0, L.pair_y3);
+    lv_obj_align(pair_line2, LV_ALIGN_TOP_MID, 0, L.content_y + L.pair_y3);
     paint_pair_hint();
 
-    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decides
+    lv_obj_add_flag(pair_page, LV_OBJ_FLAG_HIDDEN);   // ui_show_screen decides
 }
 
 // Idle "Zzz" screen — shown when the host is connected but no usage update has
@@ -630,7 +641,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     // Recolor enabled so enterprise period box can color pace and reset separately
     lv_label_set_recolor(lbl_weekly_reset, true);
 
-    build_pair_group(usage_container);
+
     build_idle_group(usage_container);
 
     // Status line — always visible on the usage view. Driven by ui_tick_anim().
@@ -705,6 +716,7 @@ void ui_init(void) {
     if (pomodoro_get_root()) {
         lv_obj_add_event_cb(pomodoro_get_root(), long_press_cb, LV_EVENT_LONG_PRESSED, NULL);
     }
+    build_pair_page(scr);
     settings_init(scr);
 
     build_pomodoro_edges(scr);
@@ -824,26 +836,29 @@ void ui_update(const UsageData* data) {
 // on an actual change. The animated status line stays visible everywhere — it
 // reads "Listening…" on the idle screen, keeping it alive rather than frozen.
 static void update_view_state(void) {
-    if (!usage_group || !pair_group || !idle_group) return;
-    int v;
-    if (!s_ble_connected) {
-        v = 0;  // pairing hint
-    } else if (data_received && data_ok && (lv_tick_get() - last_data_ms) < DATA_FRESH_MS) {
-        v = 2;  // live usage
-    } else {
-        v = 1;  // idle / Zzz
-    }
+    if (!usage_group || !idle_group) return;
+    const bool fresh = s_ble_connected && data_received && data_ok &&
+                       (lv_tick_get() - last_data_ms) < DATA_FRESH_MS;
+    const int v = fresh ? 2 : 1;        // 2 live numbers, 1 idle / Zzz
     if (v == view_state) return;
     view_state = v;
-    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(idle_group, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(usage_group, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(v == 0 ? pair_group : v == 1 ? idle_group : usage_group,
-                      LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(v == 1 ? idle_group : usage_group, LV_OBJ_FLAG_HIDDEN);
 }
 
 void ui_tick_anim(void) {
     update_pomodoro_edges();
+
+    // Fresh out of the box: after half a minute with no host, say what to do
+    // rather than leaving Clawd walking on an unexplained screen. Once only.
+    static bool pair_nudged = false;
+    if (!pair_nudged && !s_ble_connected && before_pair_screen == SCREEN_SPLASH &&
+        lv_tick_get() > 30000 && current_screen == SCREEN_SPLASH &&
+        !pomodoro_is_active() && !settings_is_open()) {
+        pair_nudged = true;
+        ui_show_screen(SCREEN_PAIR);
+    }
 
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
@@ -969,9 +984,11 @@ void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 
+    if (pair_page) lv_obj_add_flag(pair_page, LV_OBJ_FLAG_HIDDEN);
     switch (screen) {
     case SCREEN_SPLASH:  splash_show(); break;
     case SCREEN_USAGE:   lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_PAIR:    if (pair_page) lv_obj_clear_flag(pair_page, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
     tool_screens_show(screen);
@@ -999,8 +1016,9 @@ void ui_toggle_splash(void) {
 // device (someone who runs Codex alone should not walk past an empty Claude
 // page, but must still be able to pair).
 static bool screen_has_data(screen_t s) {
+    if (s == SCREEN_PAIR) return !s_ble_connected;   // only while the link is down
     if (s != SCREEN_USAGE) return tool_screens_has_data(s);
-    if (data_received || !s_ble_connected) return true;
+    if (data_received) return true;
     return !(tool_screens_has_data(SCREEN_CODEX) || tool_screens_has_data(SCREEN_COPILOT));
 }
 
@@ -1021,7 +1039,19 @@ void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) 
     (void)name; (void)mac;
     bool was_connected = s_ble_connected;
     s_ble_connected = (state == BLE_STATE_CONNECTED);
-    if (!s_ble_connected) paint_pair_hint();
+
+    // The link dropping is worth showing by itself; coming back returns the
+    // user to the page they were on. Never over the Pomodoro or the settings.
+    if (!s_ble_connected) {
+        paint_pair_hint();
+        if (was_connected && !pomodoro_is_active() && !settings_is_open() &&
+            current_screen != SCREEN_PAIR) {
+            before_pair_screen = current_screen;
+            ui_show_screen(SCREEN_PAIR);
+        }
+    } else if (!was_connected && current_screen == SCREEN_PAIR) {
+        ui_show_screen(before_pair_screen);
+    }
 
     if (s_ble_connected && !was_connected) connected_at_ms = lv_tick_get();
     // pair / idle / usage — picked from connection + data freshness.

@@ -7,6 +7,7 @@ enum screen_t {
     SCREEN_USAGE,      // Claude
     SCREEN_CODEX,
     SCREEN_COPILOT,
+    SCREEN_PAIR,       // the BLE link is down: how to pair / what to start
     SCREEN_COUNT,
 };
 
