@@ -23,7 +23,9 @@ static SimState states[MAX_STATES];
 static int      n_states = 0;
 static int      cur = 0;
 static bool     playing = true;
-static bool     connected = true;
+// SIM_BLE=off boots disconnected (and SIM_BONDS=no as a fresh device), so
+// the pairing hint can be captured headlessly. The d key still toggles.
+static bool     connected = getenv("SIM_BLE") == nullptr;
 static bool     pending = false;      // a state is queued for main's next poll
 static uint32_t delivered_ms = 0;
 
@@ -107,7 +109,7 @@ const char* ble_get_device_name(void) { return "Clawdmeter (sim)"; }
 const char* ble_get_mac_address(void) { return "00:51:4D:00:00:01"; }
 
 void ble_clear_bonds(void) { printf("[sim] pair gesture completed — bonds cleared\n"); }
-bool ble_has_bonds(void)   { return true; }
+bool ble_has_bonds(void)   { return getenv("SIM_BONDS") == nullptr; }
 
 bool ble_has_data(void) { return connected && pending; }
 const char* ble_get_data(void) {

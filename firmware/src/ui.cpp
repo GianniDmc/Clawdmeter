@@ -4,6 +4,8 @@
 #include "charge_anim.h"
 #include "pomodoro.h"
 #include "settings.h"
+#include "ble.h"
+#include "hal/imu_hal.h"
 #include "idle.h"
 #include "hal/sound_hal.h"
 #include "tool_screens.h"
@@ -426,6 +428,87 @@ static lv_obj_t* make_usage_panel(lv_obj_t* parent, int y, const char* pill_text
 
 // Pairing hint — shown when disconnected so the screen isn't empty and the
 // user knows how to (re)pair. Wording matches the 3-second release gesture.
+// ---- Pomodoro edge marks --------------------------------------------------
+// Which way to turn the device, without opening the settings: a terra-cotta
+// bar hugs the edge that starts a focus block, a dim one the break edge. Both
+// are in screen coordinates, and the panel rotates with the device, so they
+// follow from how far the focus side is from where the device lies now.
+#define EDGE_THICK 6
+
+static lv_obj_t* edge_focus = nullptr;
+static lv_obj_t* edge_break = nullptr;
+
+static lv_obj_t* make_edge(lv_obj_t* parent, lv_color_t color, lv_opa_t opa) {
+    lv_obj_t* e = lv_obj_create(parent);
+    lv_obj_remove_style_all(e);
+    lv_obj_set_style_bg_color(e, color, 0);
+    lv_obj_set_style_bg_opa(e, opa, 0);
+    lv_obj_set_style_radius(e, EDGE_THICK / 2, 0);
+    lv_obj_clear_flag(e, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(e, LV_OBJ_FLAG_HIDDEN);
+    return e;
+}
+
+static void build_pomodoro_edges(lv_obj_t* parent) {
+    edge_focus = make_edge(parent, COL_ACCENT, LV_OPA_80);
+    edge_break = make_edge(parent, COL_DIM, LV_OPA_40);
+}
+
+// delta = how many quarter turns from here to the focus side: 1 lands on the
+// right edge, 2 on the top, 3 on the left. Flip the table if a board's IMU
+// counts the other way round.
+static void place_edge(lv_obj_t* e, int delta) {
+    const int len_x = L.scr_w * 2 / 5, len_y = L.scr_h * 2 / 5;
+    switch (delta) {
+    case 1: lv_obj_set_size(e, EDGE_THICK, len_y);
+            lv_obj_align(e, LV_ALIGN_RIGHT_MID, -2, 0);  break;
+    case 2: lv_obj_set_size(e, len_x, EDGE_THICK);
+            lv_obj_align(e, LV_ALIGN_TOP_MID, 0, 2);     break;
+    case 3: lv_obj_set_size(e, EDGE_THICK, len_y);
+            lv_obj_align(e, LV_ALIGN_LEFT_MID, 2, 0);    break;
+    default: lv_obj_set_size(e, len_x, EDGE_THICK);
+            lv_obj_align(e, LV_ALIGN_BOTTOM_MID, 0, -2); break;
+    }
+    lv_obj_clear_flag(e, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void update_pomodoro_edges(void) {
+    if (!edge_focus) return;
+    const PomodoroConfig& cfg = pomodoro_config();
+    // Nothing to point at while the timer, the settings or the splash's own
+    // full-screen art is what the user is looking at.
+    const bool show = cfg.enabled && !pomodoro_is_active() && !settings_is_open();
+    if (!show) {
+        lv_obj_add_flag(edge_focus, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(edge_break, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    const int q = imu_hal_rotation_quadrant() & 3;
+    const int to_focus = (cfg.focus_quad - q) & 3;
+    place_edge(edge_focus, to_focus);
+    place_edge(edge_break, (to_focus + 2) & 3);
+}
+
+static lv_obj_t* pair_name = nullptr;
+static lv_obj_t* pair_line1 = nullptr;
+static lv_obj_t* pair_line2 = nullptr;
+
+// The hint depends on whether the device has ever been paired: a fresh one
+// wants to be picked in the host's Bluetooth list, a bonded one is usually
+// just waiting for its daemon, and re-pairing needs the power-button hold.
+static void paint_pair_hint(void) {
+    if (!pair_line1) return;
+    if (ble_has_bonds()) {
+        lv_label_set_text(pair_line1, "Waiting for the daemon");
+        lv_label_set_text(pair_line2, "Start it on your computer.\n"
+                                      "Hold PWR 3 s to pair another one.");
+    } else {
+        lv_label_set_text(pair_line1, "Ready to pair");
+        lv_label_set_text(pair_line2, "Pick \"Clawdmeter\" in your\n"
+                                      "computer's Bluetooth settings.");
+    }
+}
+
 static void build_pair_group(lv_obj_t* parent) {
     pair_group = lv_obj_create(parent);
     lv_obj_set_size(pair_group, L.scr_w, L.scr_h - L.content_y);
@@ -436,23 +519,28 @@ static void build_pair_group(lv_obj_t* parent) {
     lv_obj_clear_flag(pair_group, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
-    lv_obj_t* l1 = lv_label_create(pair_group);
-    lv_label_set_text(l1, "To pair");
-    lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
-    lv_obj_set_style_text_color(l1, COL_TEXT, 0);
-    lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, L.pair_y1);
+    // The name to look for on the host, then what to do — which differs
+    // between a first pairing and a device that is simply waiting for its
+    // daemon to come back.
+    pair_name = lv_label_create(pair_group);
+    lv_label_set_text(pair_name, "Clawdmeter");
+    lv_obj_set_style_text_font(pair_name, L.bt_status_font, 0);
+    lv_obj_set_style_text_color(pair_name, COL_TEXT, 0);
+    lv_obj_align(pair_name, LV_ALIGN_TOP_MID, 0, L.pair_y1);
 
-    lv_obj_t* l2 = lv_label_create(pair_group);
-    lv_label_set_text(l2, "hold the power button");
-    lv_obj_set_style_text_font(l2, L.bt_device_font, 0);
-    lv_obj_set_style_text_color(l2, COL_DIM, 0);
-    lv_obj_align(l2, LV_ALIGN_TOP_MID, 0, L.pair_y2);
+    pair_line1 = lv_label_create(pair_group);
+    lv_label_set_text(pair_line1, "");
+    lv_obj_set_style_text_font(pair_line1, L.bt_device_font, 0);
+    lv_obj_set_style_text_color(pair_line1, COL_ACCENT, 0);
+    lv_obj_align(pair_line1, LV_ALIGN_TOP_MID, 0, L.pair_y2);
 
-    lv_obj_t* l3 = lv_label_create(pair_group);
-    lv_label_set_text(l3, "for 3 seconds, then release");
-    lv_obj_set_style_text_font(l3, L.bt_device_font, 0);
-    lv_obj_set_style_text_color(l3, COL_DIM, 0);
-    lv_obj_align(l3, LV_ALIGN_TOP_MID, 0, L.pair_y3);
+    pair_line2 = lv_label_create(pair_group);
+    lv_label_set_text(pair_line2, "");
+    lv_obj_set_style_text_font(pair_line2, L.bt_device_font, 0);
+    lv_obj_set_style_text_color(pair_line2, COL_DIM, 0);
+    lv_obj_set_style_text_align(pair_line2, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(pair_line2, LV_ALIGN_TOP_MID, 0, L.pair_y3);
+    paint_pair_hint();
 
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decides
 }
@@ -619,6 +707,8 @@ void ui_init(void) {
     }
     settings_init(scr);
 
+    build_pomodoro_edges(scr);
+
     // Last, so the charge overlay covers everything else when it plays.
     charge_anim_init(scr);
 }
@@ -753,6 +843,8 @@ static void update_view_state(void) {
 }
 
 void ui_tick_anim(void) {
+    update_pomodoro_edges();
+
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
     if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
@@ -929,6 +1021,7 @@ void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) 
     (void)name; (void)mac;
     bool was_connected = s_ble_connected;
     s_ble_connected = (state == BLE_STATE_CONNECTED);
+    if (!s_ble_connected) paint_pair_hint();
 
     if (s_ble_connected && !was_connected) connected_at_ms = lv_tick_get();
     // pair / idle / usage — picked from connection + data freshness.
