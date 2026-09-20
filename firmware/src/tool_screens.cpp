@@ -272,12 +272,28 @@ static void tool_state_changed(const char* st, const char* prev, const char* nam
     }
 }
 
+// Same warning as the usage page: the last heads-up before a window runs out.
+#define CX_WARN_PCT   90
+#define CX_REARM_PCT  85
+static bool cx_warned[2] = { false, false };
+
+static void codex_limit_warning(int used, bool* warned, const char* what) {
+    if (used < CX_REARM_PCT) *warned = false;
+    if (used < CX_WARN_PCT || *warned) return;
+    *warned = true;
+    Serial.printf("Codex %s limit at %d%%\n", what, used);
+    if (settings_sound().claude_alerts) sound_hal_play(SOUND_ALERT);
+    idle_note_activity();
+}
+
 void tool_screens_codex(const CodexData& d) {
     if (!cx_page) return;
     cx_seen = true;
     if (d.has_limits) {
         paint_codex_panel(cx_panels[0], d.p, d.pr);
         paint_codex_panel(cx_panels[1], d.w, d.wr);
+        codex_limit_warning(d.p, &cx_warned[0], "5h");
+        codex_limit_warning(d.w, &cx_warned[1], "weekly");
     }
     if (strcmp(d.st, cx_state) != 0) {
         char prev[8];

@@ -4,6 +4,8 @@
 #include "charge_anim.h"
 #include "pomodoro.h"
 #include "settings.h"
+#include "idle.h"
+#include "hal/sound_hal.h"
 #include "tool_screens.h"
 #include <lvgl.h>
 #include <time.h>
@@ -621,6 +623,24 @@ void ui_init(void) {
     charge_anim_init(scr);
 }
 
+// Nearly out of budget: the bars already turn red, but a limit you are about
+// to hit deserves the alert sound and a lit panel. Once per window — the
+// percentage dropping (a reset, or a refill) re-arms it.
+#define LIMIT_WARN_PCT   90.0f
+#define LIMIT_REARM_PCT  85.0f
+static bool s_warned = false;
+static bool w_warned = false;
+
+static void limit_warning(float pct, bool* warned, const char* what) {
+    if (pct < LIMIT_REARM_PCT) *warned = false;
+    if (pct < LIMIT_WARN_PCT || *warned) return;
+    *warned = true;
+    Serial.printf("%s limit at %d%%\n", what, (int)(pct + 0.5f));
+    if (settings_sound().claude_alerts) sound_hal_play(SOUND_ALERT);
+    idle_note_activity();
+}
+
+
 void ui_update(const UsageData* data) {
     if (!data->valid) return;
     data_ok = data->ok;
@@ -637,6 +657,9 @@ void ui_update(const UsageData* data) {
         clock_last_min = -1;
         lv_label_set_text(lbl_title, "Usage");
     }
+
+    limit_warning(data->session_pct, &s_warned, "session");
+    if (!data->enterprise) limit_warning(data->weekly_pct, &w_warned, "weekly");
 
     int s_pct = (int)(data->session_pct + 0.5f);
 
