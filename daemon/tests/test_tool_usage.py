@@ -64,6 +64,27 @@ def test_copilot_counts_prompts_and_tokens_by_local_day(tmp_path):
     assert got["grid"] == {"mo": 9, "wd": dt.date(2026, 9, 1).weekday(), "dim": 30, "d": [50, 0, 100]}
 
 
+def test_copilot_caches_finished_days_but_not_today(tmp_path):
+    # Days already over are priced once; today is re-read, so a reply that
+    # lands between two polls still shows up.
+    from daemon import tool_usage
+    tool_usage._FINISHED_MONTH = None
+    now = dt.datetime(2026, 9, 3, 15, 0).timestamp()
+    ms = lambda d, h: int(dt.datetime(2026, 9, d, h).timestamp() * 1000)
+    user = {"role": "user", "model": {"providerID": "github-copilot"}}
+    reply = {"role": "assistant", "providerID": "github-copilot", "modelID": "unlisted", "cost": 0.5}
+    db = tmp_path / "oc.db"
+    _opencode_db(db, [("s", ms(1, 10), user), ("s", ms(1, 10), reply)])
+    assert read_copilot(db, tmp_path / "missing.db", now=now)["summary"]["mc"] == 50
+
+    con = sqlite3.connect(db)
+    con.execute("INSERT INTO message VALUES ('x', 's', ?, ?)", (ms(3, 9), json.dumps(reply)))
+    con.commit()
+    con.close()
+    assert read_copilot(db, tmp_path / "missing.db", now=now)["summary"]["mc"] == 100
+    tool_usage._FINISHED_MONTH = None
+
+
 def test_copilot_absent_is_none(tmp_path):
     assert read_copilot(tmp_path / "a.db", tmp_path / "b.db") is None
 

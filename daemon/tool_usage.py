@@ -218,23 +218,49 @@ def _copilot_cli_days(db: Path, since_utc: str) -> dict[str, list[float]]:
     return out
 
 
-def read_copilot(opencode_db: Path = OPENCODE_DB, copilot_db: Path = COPILOT_CLI_DB,
-                 now: float | None = None) -> dict | None:
-    """Credits and prompts today and month-to-date, plus credits per day for the grid."""
-    now = time.time() if now is None else now
-    today = dt.datetime.fromtimestamp(now)
-    first = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    since_ms = int(first.timestamp() * 1000)
-    since_utc = dt.datetime.fromtimestamp(first.timestamp(), dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+# Days before today never change, so they are priced once. Only today is
+# re-read on each poll: a full month of OpenCode messages costs ~400 ms on a
+# busy month, against a few ms for one day.
+_FINISHED: dict[str, list[float]] = {}
+_FINISHED_MONTH: str | None = None
+_FINISHED_THROUGH: str | None = None
 
-    if not opencode_db.exists() and not copilot_db.exists():
-        return None
+
+def _read_days(opencode_db: Path, copilot_db: Path, start: dt.datetime) -> dict[str, list[float]]:
+    since_ms = int(start.timestamp() * 1000)
+    since_utc = dt.datetime.fromtimestamp(start.timestamp(), dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     days: dict[str, list[float]] = {}
     for source in (_opencode_days(opencode_db, since_ms), _copilot_cli_days(copilot_db, since_utc)):
         for day, (n, cred) in source.items():
             entry = days.setdefault(day, [0, 0.0])
             entry[0] += n
             entry[1] += cred
+    return days
+
+
+def read_copilot(opencode_db: Path = OPENCODE_DB, copilot_db: Path = COPILOT_CLI_DB,
+                 now: float | None = None) -> dict | None:
+    """Credits and prompts today and month-to-date, plus credits per day for the grid."""
+    global _FINISHED, _FINISHED_MONTH, _FINISHED_THROUGH
+    now = time.time() if now is None else now
+    today = dt.datetime.fromtimestamp(now)
+    first = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    midnight = today.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if not opencode_db.exists() and not copilot_db.exists():
+        return None
+
+    # The days already over: priced once per day, then reused.
+    month, yesterday = first.strftime("%Y-%m"), midnight.strftime("%Y-%m-%d")
+    if _FINISHED_MONTH != month or _FINISHED_THROUGH != yesterday:
+        _FINISHED = {d: v for d, v in _read_days(opencode_db, copilot_db, first).items()
+                     if d < yesterday}
+        _FINISHED_MONTH, _FINISHED_THROUGH = month, yesterday
+    days: dict[str, list[float]] = {d: list(v) for d, v in _FINISHED.items()}
+    for day, (n, cred) in _read_days(opencode_db, copilot_db, midnight).items():
+        entry = days.setdefault(day, [0, 0.0])
+        entry[0] += n
+        entry[1] += cred
 
     key = today.strftime("%Y-%m-%d")
     td, tc = days.get(key, [0, 0.0])

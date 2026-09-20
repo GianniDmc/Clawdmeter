@@ -175,6 +175,7 @@ static CodexPanel cx_panels[2];
 static lv_obj_t*  cx_status = nullptr;
 static lv_obj_t*  cx_clock = nullptr;
 static char       cx_state[8] = "";
+static bool       cx_seen = false;    // a "cx" message ever arrived
 static screen_t   cx_back = SCREEN_COUNT;  // screen to restore after a "wait"
 
 static void build_codex_panel(lv_obj_t* page, int y, const char* title, CodexPanel* out) {
@@ -273,6 +274,7 @@ static void tool_state_changed(const char* st, const char* prev, const char* nam
 
 void tool_screens_codex(const CodexData& d) {
     if (!cx_page) return;
+    cx_seen = true;
     if (d.has_limits) {
         paint_codex_panel(cx_panels[0], d.p, d.pr);
         paint_codex_panel(cx_panels[1], d.w, d.wr);
@@ -304,6 +306,7 @@ static lv_obj_t* cp_clock = nullptr;
 static lv_obj_t* cp_dot = nullptr;       // status row: OpenCode's live state
 static lv_obj_t* cp_status = nullptr;
 static char      oc_state[8] = "";
+static bool      cp_seen = false;     // a "cp"/"cpg"/"ocs" message ever arrived
 static screen_t  cp_back = SCREEN_COUNT;
 
 #define GH_WARN    lv_color_hex(0xd29922)   // GitHub's attention yellow
@@ -411,6 +414,7 @@ static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_
 
 void tool_screens_copilot(const CopilotData& d) {
     if (!cp_page) return;
+    cp_seen = true;
     char buf[32];
     fmt_thousands(buf, sizeof(buf), d.tc);
     lv_label_set_text(cp_today_n, buf);
@@ -458,6 +462,7 @@ static void paint_copilot_status(void) {
 
 void tool_screens_opencode_state(const char* st) {
     if (!cp_page) return;
+    if (st[0]) cp_seen = true;
     if (strcmp(st, oc_state) != 0) {
         char prev[8];
         strlcpy(prev, oc_state, sizeof(prev));
@@ -475,6 +480,12 @@ void tool_screens_init(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t l
     compute_tool_layout(board_caps());
     build_codex(parent, click_cb, long_press_cb);
     build_copilot(parent, click_cb, long_press_cb);
+}
+
+bool tool_screens_has_data(screen_t screen) {
+    if (screen == SCREEN_CODEX)   return cx_seen;
+    if (screen == SCREEN_COPILOT) return cp_seen;
+    return true;
 }
 
 void tool_screens_show(screen_t screen) {

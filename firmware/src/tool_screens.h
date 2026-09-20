@@ -36,6 +36,10 @@ struct CopilotGrid {
 // to the same callbacks as the other screens.
 void tool_screens_init(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t long_press_cb);
 
+// False for a tool page that never received anything, so the button doesn't
+// walk the user through an empty screen.
+bool tool_screens_has_data(screen_t screen);
+
 // Shows the page for `screen` if it is one of ours, hides the others.
 void tool_screens_show(screen_t screen);
 

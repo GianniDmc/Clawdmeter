@@ -879,7 +879,14 @@ void ui_toggle_splash(void) {
 }
 
 void ui_next_screen(void) {
-    ui_show_screen((screen_t)((current_screen + 1) % SCREEN_COUNT));
+    // Walk past the tool pages that have never received data: a Codex page
+    // reading "--% left" is worse than not being in the rotation at all.
+    screen_t next = current_screen;
+    for (int i = 0; i < SCREEN_COUNT; i++) {
+        next = (screen_t)((next + 1) % SCREEN_COUNT);
+        if (tool_screens_has_data(next)) break;
+    }
+    ui_show_screen(next);
 }
 
 screen_t ui_get_current_screen(void) {
