@@ -4,9 +4,11 @@
 Run: python -m pytest daemon/tests/test_claude_state.py -x -q
 """
 import json
+import time
 
 from daemon.claude_state_hook import record, state_for
-from daemon.claude_usage_daemon import read_claude_state
+from daemon.claude_usage_daemon import (opencode_payload, other_tool_payloads,
+                                        read_claude_state)
 
 
 def ev(name, **kw):
@@ -102,3 +104,22 @@ def test_codex_permission_request_waits_and_interrupt_clears(tmp_path):
     assert read_claude_state(tmp_path, now=6.0) == "wait"
     record(ev("Interrupt"), tmp_path)
     assert read_claude_state(tmp_path, now=6.0) == ""
+
+
+def test_opencode_payload_carries_the_state():
+    # The OpenCode plugin's state rides its own tiny message, so a change
+    # never waits on the Copilot database query.
+    assert opencode_payload("wait") == {"k": "ocs", "st": "wait"}
+    assert opencode_payload("") == {"k": "ocs", "st": ""}
+
+
+def test_other_tool_payloads_include_opencode():
+    msgs = other_tool_payloads("", "work")
+    assert {"k": "ocs", "st": "work"} in msgs
+
+
+def test_opencode_state_folds_the_plugin_files(tmp_path):
+    # Same folding as Claude Code's: one file per session, wait > work > done.
+    (tmp_path / "a.json").write_text(json.dumps({"state": "work", "ts": time.time()}))
+    (tmp_path / "b.json").write_text(json.dumps({"state": "wait", "ts": time.time()}))
+    assert read_claude_state(tmp_path) == "wait"
