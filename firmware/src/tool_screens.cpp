@@ -11,11 +11,65 @@ LV_FONT_DECLARE(font_mono_32);
 LV_FONT_DECLARE(font_mono_18);
 LV_FONT_DECLARE(font_styrene_48);
 LV_FONT_DECLARE(font_styrene_28);
+LV_FONT_DECLARE(font_styrene_24);
 LV_FONT_DECLARE(font_styrene_20);
 LV_FONT_DECLARE(font_styrene_16);
 LV_FONT_DECLARE(font_styrene_12);
 
-#define MARGIN 20
+#define GRID_COLS  7
+#define GRID_ROWS  6
+
+// Layout picked from the board's pixel size, the way ui.cpp does it: one
+// breakpoint at 460 px tall, everything else derived so a 240x240 or 368x448
+// panel gets the same pages, just tighter.
+struct ToolLayout {
+    int16_t w, h, margin;
+    const lv_font_t *cx_title, *cx_body, *cx_pct;      // Codex: mono
+    const lv_font_t *cp_title, *cp_num, *cp_label, *cp_wd;   // Copilot: Styrene
+    int16_t title_y, clock_y, sub_y;
+    int16_t panels_y, panel_h, panel_gap, status_y;
+    int16_t cards_y, card_h, cal_y, cal_h, cell_w, cell_h, cell_gap, grid_top;
+    bool    show_clock;
+};
+static ToolLayout T;
+
+static void compute_tool_layout(const BoardCaps& c) {
+    const bool big = c.height >= 460;
+    T.w = c.width;
+    T.h = c.height;
+    T.margin   = big ? 20 : 10;
+    T.cx_title = big ? &font_mono_32 : &font_mono_18;
+    T.cx_pct   = big ? &font_mono_32 : &font_mono_18;
+    T.cx_body  = &font_mono_18;
+    T.cp_title = big ? &font_styrene_28 : &font_styrene_20;
+    T.cp_num   = big ? &font_styrene_48 : &font_styrene_24;
+    T.cp_label = big ? &font_styrene_16 : &font_styrene_12;
+    T.cp_wd    = &font_styrene_12;
+
+    T.title_y  = big ? 26 : 8;
+    T.clock_y  = T.title_y + (big ? 10 : 2);
+    T.sub_y    = big ? 70 : 34;
+
+    // Codex: two panels between the header and the status line.
+    T.status_y  = c.height - (big ? 52 : 24);
+    T.panels_y  = T.sub_y + (big ? 40 : 20);
+    T.panel_gap = big ? 16 : 8;
+    T.panel_h   = (T.status_y - T.panels_y - T.panel_gap - (big ? 12 : 6)) / 2;
+
+    // Copilot: two cards, then the calendar filling what is left.
+    T.cards_y = T.sub_y + (big ? 28 : 16);
+    T.card_h  = big ? 120 : (c.height / 4);
+    T.cal_y   = T.cards_y + T.card_h + (big ? 12 : 8);
+    T.cal_h   = c.height - T.cal_y - T.margin;
+    T.cell_gap = big ? 6 : 3;
+    T.grid_top = big ? 58 : 34;
+    // Narrow panels have no room between the title and the battery: the usage
+    // page still carries the clock.
+    T.show_clock = c.width >= 400;
+    const int16_t inner = c.width - 2 * T.margin - 2 * (big ? 14 : 8);
+    T.cell_w = (inner - (GRID_COLS - 1) * T.cell_gap) / GRID_COLS;
+    T.cell_h = (T.cal_h - T.grid_top - (big ? 8 : 4) - (GRID_ROWS - 1) * T.cell_gap) / GRID_ROWS;
+}
 
 // ---- Palettes ------------------------------------------------------------------
 // Codex: its terminal UI — near-black, white type, grey chrome.
@@ -124,14 +178,16 @@ static char       cx_state[8] = "";
 static screen_t   cx_back = SCREEN_COUNT;  // screen to restore after a "wait"
 
 static void build_codex_panel(lv_obj_t* page, int y, const char* title, CodexPanel* out) {
-    const int w = board_caps().width - 2 * MARGIN;
-    lv_obj_t* box = make_box(page, MARGIN, y, w, 140, CX_PANEL, CX_BORDER, 6);
-    make_label(box, &font_mono_18, CX_DIM, 16, 12, title);
-    out->pct = make_label(box, &font_mono_32, CX_TEXT, 16, 38, "--% left");
+    const int w = T.w - 2 * T.margin;
+    const int h = T.panel_h;
+    const int pad = T.margin < 20 ? 8 : 16;
+    lv_obj_t* box = make_box(page, T.margin, y, w, h, CX_PANEL, CX_BORDER, 6);
+    make_label(box, T.cx_body, CX_DIM, pad, h * 12 / 140, title);
+    out->pct = make_label(box, T.cx_pct, CX_TEXT, pad, h * 38 / 140, "--% left");
 
     out->bar = lv_bar_create(box);
-    lv_obj_set_pos(out->bar, 16, 84);
-    lv_obj_set_size(out->bar, w - 32, 10);
+    lv_obj_set_pos(out->bar, pad, h - (T.margin < 20 ? 32 : 56));
+    lv_obj_set_size(out->bar, w - 2 * pad, T.margin < 20 ? 6 : 10);
     lv_bar_set_range(out->bar, 0, 100);
     lv_bar_set_value(out->bar, 0, LV_ANIM_OFF);
     lv_obj_set_style_radius(out->bar, 2, LV_PART_MAIN);
@@ -140,7 +196,7 @@ static void build_codex_panel(lv_obj_t* page, int y, const char* title, CodexPan
     lv_obj_set_style_bg_color(out->bar, CX_TEXT, LV_PART_INDICATOR);
     lv_obj_clear_flag(out->bar, LV_OBJ_FLAG_CLICKABLE);
 
-    out->reset = make_label(box, &font_mono_18, CX_DIM, 16, 104, "no data yet");
+    out->reset = make_label(box, T.cx_body, CX_DIM, pad, h - (T.margin < 20 ? 20 : 36), "no data yet");
 }
 
 static void paint_codex_panel(CodexPanel& p, int used, int reset_mins) {
@@ -156,13 +212,14 @@ static void paint_codex_panel(CodexPanel& p, int used, int reset_mins) {
 
 static void build_codex(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t long_cb) {
     cx_page = make_page(parent, CX_BG, click_cb, long_cb);
-    make_label(cx_page, &font_mono_32, CX_TEXT, MARGIN, 26, ">_ codex");
-    make_label(cx_page, &font_mono_18, CX_DIM, MARGIN + 2, 70, "rate limits");
-    build_codex_panel(cx_page, 110, "5h limit", &cx_panels[0]);
-    build_codex_panel(cx_page, 266, "weekly limit", &cx_panels[1]);
-    cx_status = make_label(cx_page, &font_mono_18, CX_DIM, MARGIN + 2, 428, "- idle");
-    cx_clock = make_label(cx_page, &font_mono_18, CX_DIM, 0, 36, "");
-    lv_obj_align(cx_clock, LV_ALIGN_TOP_MID, 0, 36);
+    make_label(cx_page, T.cx_title, CX_TEXT, T.margin, T.title_y, ">_ codex");
+    make_label(cx_page, T.cx_body, CX_DIM, T.margin + 2, T.sub_y, "rate limits");
+    build_codex_panel(cx_page, T.panels_y, "5h limit", &cx_panels[0]);
+    build_codex_panel(cx_page, T.panels_y + T.panel_h + T.panel_gap, "weekly limit", &cx_panels[1]);
+    cx_status = make_label(cx_page, T.cx_body, CX_DIM, T.margin + 2, T.status_y, "- idle");
+    cx_clock = make_label(cx_page, T.cx_body, CX_DIM, 0, T.clock_y, "");
+    lv_obj_align(cx_clock, LV_ALIGN_TOP_MID, 0, T.clock_y);
+    if (!T.show_clock) lv_obj_add_flag(cx_clock, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void paint_codex_status(void) {
@@ -233,12 +290,6 @@ void tool_screens_codex(const CodexData& d) {
 
 // ---- Copilot page --------------------------------------------------------------
 
-#define GRID_COLS  7
-#define GRID_ROWS  6
-#define CELL_W     50
-#define CELL_H     22
-#define CELL_GAP   6
-
 static lv_obj_t* cp_page = nullptr;
 static lv_obj_t* cp_today_n = nullptr;
 static lv_obj_t* cp_today_tok = nullptr;
@@ -298,58 +349,62 @@ static void grid_draw_cb(lv_event_t* e) {
 
         const int row = i / GRID_COLS, colx = i % GRID_COLS;
         lv_area_t cell;
-        cell.x1 = area.x1 + colx * (CELL_W + CELL_GAP);
-        cell.y1 = area.y1 + row * (CELL_H + CELL_GAP);
-        cell.x2 = cell.x1 + CELL_W - 1;
-        cell.y2 = cell.y1 + CELL_H - 1;
+        cell.x1 = area.x1 + colx * (T.cell_w + T.cell_gap);
+        cell.y1 = area.y1 + row * (T.cell_h + T.cell_gap);
+        cell.x2 = cell.x1 + T.cell_w - 1;
+        cell.y2 = cell.y1 + T.cell_h - 1;
         lv_draw_rect(layer, &dsc, &cell);
     }
 }
 
 static void build_copilot_card(lv_obj_t* page, int x, int w, const char* title,
                                lv_obj_t** out_title, lv_obj_t** out_n, lv_obj_t** out_tok) {
-    lv_obj_t* card = make_box(page, x, 84, w, 120, GH_CARD, GH_BORDER, 6);
-    lv_obj_t* t = make_label(card, &font_styrene_16, GH_MUTED, 14, 10, title);
+    const int pad = T.margin < 20 ? 8 : 14;
+    lv_obj_t* card = make_box(page, x, T.cards_y, w, T.card_h, GH_CARD, GH_BORDER, 6);
+    lv_obj_t* t = make_label(card, T.cp_label, GH_MUTED, pad, T.card_h * 10 / 120, title);
     if (out_title) *out_title = t;
-    *out_n = make_label(card, &font_styrene_48, GH_TEXT, 12, 30, "--");
-    *out_tok = make_label(card, &font_styrene_16, GH_MUTED, 14, 90, "AI credits");
+    *out_n = make_label(card, T.cp_num, GH_TEXT, pad - 2, T.card_h * 30 / 120, "--");
+    *out_tok = make_label(card, T.cp_label, GH_MUTED, pad, T.card_h * 90 / 120, "AI credits");
 }
 
 static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t long_cb) {
-    const BoardCaps& c = board_caps();
     cp_page = make_page(parent, GH_BG, click_cb, long_cb);
+    const int pad = T.margin < 20 ? 8 : 14;
 
     // Title: the Copilot accent as a small mark, then the name.
-    lv_obj_t* mark = make_box(cp_page, MARGIN, 32, 14, 14, GH_ACCENT, GH_ACCENT, 4);
+    lv_obj_t* mark = make_box(cp_page, T.margin, T.title_y + 10, 14, 14, GH_ACCENT, GH_ACCENT, 4);
     (void)mark;
-    make_label(cp_page, &font_styrene_28, GH_TEXT, MARGIN + 24, 22, "Copilot");
+    make_label(cp_page, T.cp_title, GH_TEXT, T.margin + 24, T.title_y, "Copilot");
     // What OpenCode is doing, as a GitHub-style status dot and label.
-    cp_dot = make_box(cp_page, MARGIN + 3, 61, 8, 8, GH_MUTED, GH_MUTED, 4);
-    cp_status = make_label(cp_page, &font_styrene_16, GH_MUTED, MARGIN + 24, 56, "OpenCode idle");
-    cp_clock = make_label(cp_page, &font_styrene_20, GH_MUTED, 0, 32, "");
-    lv_obj_align(cp_clock, LV_ALIGN_TOP_MID, 0, 32);
+    cp_dot = make_box(cp_page, T.margin + 3, T.sub_y + 5, 8, 8, GH_MUTED, GH_MUTED, 4);
+    cp_status = make_label(cp_page, T.cp_label, GH_MUTED, T.margin + 24, T.sub_y, "OpenCode idle");
+    cp_clock = make_label(cp_page, T.cp_label, GH_MUTED, 0, T.clock_y, "");
+    lv_obj_align(cp_clock, LV_ALIGN_TOP_MID, 0, T.clock_y);
+    if (!T.show_clock) lv_obj_add_flag(cp_clock, LV_OBJ_FLAG_HIDDEN);
 
-    const int gap = 12;
-    const int card_w = (c.width - 2 * MARGIN - gap) / 2;
-    build_copilot_card(cp_page, MARGIN, card_w, "Today", nullptr, &cp_today_n, &cp_today_tok);
-    build_copilot_card(cp_page, MARGIN + card_w + gap, card_w, "This month",
+    const int gap = T.margin < 20 ? 8 : 12;
+    const int card_w = (T.w - 2 * T.margin - gap) / 2;
+    build_copilot_card(cp_page, T.margin, card_w, "Today", nullptr, &cp_today_n, &cp_today_tok);
+    build_copilot_card(cp_page, T.margin + card_w + gap, card_w, "This month",
                        &cp_month_label, &cp_month_n, &cp_month_tok);
 
     // The month as a calendar, shaded like a contribution graph.
-    lv_obj_t* card = make_box(cp_page, MARGIN, 216, c.width - 2 * MARGIN, 244, GH_CARD, GH_BORDER, 6);
-    cp_grid_title = make_label(card, &font_styrene_16, GH_MUTED, 14, 10, "This month");
-    const int grid_w = GRID_COLS * CELL_W + (GRID_COLS - 1) * CELL_GAP;
-    const int x0 = (c.width - 2 * MARGIN - grid_w) / 2;
+    lv_obj_t* card = make_box(cp_page, T.margin, T.cal_y, T.w - 2 * T.margin, T.cal_h,
+                              GH_CARD, GH_BORDER, 6);
+    cp_grid_title = make_label(card, T.cp_label, GH_MUTED, pad, T.cal_h * 10 / 244, "This month");
+    const int grid_w = GRID_COLS * T.cell_w + (GRID_COLS - 1) * T.cell_gap;
+    const int x0 = (T.w - 2 * T.margin - grid_w) / 2;
     static const char* const WD[GRID_COLS] = { "M", "T", "W", "T", "F", "S", "S" };
     for (int col = 0; col < GRID_COLS; col++) {
-        lv_obj_t* l = make_label(card, &font_styrene_12, GH_MUTED,
-                                 x0 + col * (CELL_W + CELL_GAP) + CELL_W / 2 - 4, 38, WD[col]);
+        lv_obj_t* l = make_label(card, T.cp_wd, GH_MUTED,
+                                 x0 + col * (T.cell_w + T.cell_gap) + T.cell_w / 2 - 4,
+                                 T.grid_top - (T.margin < 20 ? 14 : 20), WD[col]);
         (void)l;
     }
     cp_grid = lv_obj_create(card);
     lv_obj_remove_style_all(cp_grid);
-    lv_obj_set_pos(cp_grid, x0, 58);
-    lv_obj_set_size(cp_grid, grid_w, GRID_ROWS * (CELL_H + CELL_GAP) - CELL_GAP);
+    lv_obj_set_pos(cp_grid, x0, T.grid_top);
+    lv_obj_set_size(cp_grid, grid_w, GRID_ROWS * (T.cell_h + T.cell_gap) - T.cell_gap);
     lv_obj_clear_flag(cp_grid, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(cp_grid, grid_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
 }
@@ -359,10 +414,12 @@ void tool_screens_copilot(const CopilotData& d) {
     char buf[32];
     fmt_thousands(buf, sizeof(buf), d.tc);
     lv_label_set_text(cp_today_n, buf);
-    lv_label_set_text_fmt(cp_today_tok, "credits - %d prompt%s", d.td, d.td == 1 ? "" : "s");
+    lv_label_set_text_fmt(cp_today_tok, T.show_clock ? "credits - %d prompt%s" : "%d prompt%s",
+                          d.td, d.td == 1 ? "" : "s");
     fmt_thousands(buf, sizeof(buf), d.mc);
     lv_label_set_text(cp_month_n, buf);
-    lv_label_set_text_fmt(cp_month_tok, "credits - %d prompt%s", d.md, d.md == 1 ? "" : "s");
+    lv_label_set_text_fmt(cp_month_tok, T.show_clock ? "credits - %d prompt%s" : "%d prompt%s",
+                          d.md, d.md == 1 ? "" : "s");
 }
 
 void tool_screens_copilot_grid(const CopilotGrid& g) {
@@ -415,6 +472,7 @@ void tool_screens_opencode_state(const char* st) {
 // ---- Shared ---------------------------------------------------------------------
 
 void tool_screens_init(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_t long_press_cb) {
+    compute_tool_layout(board_caps());
     build_codex(parent, click_cb, long_press_cb);
     build_copilot(parent, click_cb, long_press_cb);
 }
