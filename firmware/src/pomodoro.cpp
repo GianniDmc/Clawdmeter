@@ -4,6 +4,7 @@
 #include "theme.h"
 #include "idle.h"
 #include "hal/imu_hal.h"
+#include "hal/display_hal.h"
 #include "hal/sound_hal.h"
 #include "hal/board_caps.h"
 #include <Arduino.h>
@@ -187,6 +188,7 @@ static void finish_block(void) {
 }
 
 static void enter(int mode) {
+    display_hal_follow_orientation(true);
     cur_mode = mode;
 
     if (completed && millis() - last_completed_ms > CYCLE_STALE_MS) completed = 0;
@@ -207,6 +209,7 @@ static void enter(int mode) {
 }
 
 static void leave(void) {
+    display_hal_follow_orientation(false);
     cur_mode = -1;
     if (!s_active) return;
     pulse_stop();

@@ -30,3 +30,9 @@ void display_hal_tick(void);
 
 // LVGL flush regions must be even-aligned on the CO5300; harmless on others.
 void display_hal_round_area(int32_t* x1, int32_t* y1, int32_t* x2, int32_t* y2);
+
+// Follow the IMU or stay put. The 2.16 C6 boots pinned (turning it is how the
+// Pomodoro starts, and re-orienting everything else cost more than it gave);
+// the Pomodoro switches it on while its timer is up so the clock reads
+// upright in the hand, and off again on the way out. A no-op elsewhere.
+void display_hal_follow_orientation(bool follow);

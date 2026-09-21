@@ -478,7 +478,8 @@ static void update_pomodoro_edges(void) {
     const PomodoroConfig& cfg = pomodoro_config();
     // Nothing to point at while the timer, the settings or the splash's own
     // full-screen art is what the user is looking at.
-    const bool show = cfg.enabled && !pomodoro_is_active() && !settings_is_open();
+    const bool show = cfg.enabled && imu_hal_orientation_known() &&
+                      !pomodoro_is_active() && !settings_is_open();
     if (!show) {
         lv_obj_add_flag(edge_focus, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(edge_break, LV_OBJ_FLAG_HIDDEN);

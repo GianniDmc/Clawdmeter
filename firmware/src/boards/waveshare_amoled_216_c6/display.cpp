@@ -89,6 +89,14 @@ static uint8_t applied_quadrant = 3;
 
 uint8_t display_applied_quadrant(void) { return applied_quadrant; }
 
+// Pinned by default (BOARD_ROTATE_WITH_IMU 0); the Pomodoro turns this on
+// while its timer is up, so the countdown reads upright on a device lying on
+// its side, and off again when it leaves.
+static const uint8_t boot_quadrant = 3;
+static bool follow_orientation = false;
+
+void display_hal_follow_orientation(bool follow) { follow_orientation = follow; }
+
 static void apply_rotation(uint8_t q) {
     if (!bus) return;
     applied_quadrant = q & 3;
@@ -105,7 +113,8 @@ void display_hal_tick(void) {
     static uint8_t  ramp_step = 0;     // 0=idle, 1..4=ramping
     static uint32_t ramp_last = 0;
 
-    uint8_t rot = BOARD_ROTATE_WITH_IMU ? imu_hal_rotation_quadrant() : applied_quadrant;
+    uint8_t rot = (BOARD_ROTATE_WITH_IMU || follow_orientation)
+                      ? imu_hal_rotation_quadrant() : boot_quadrant;
     if (rot != last_rotation) {
         display_hal_set_brightness(0);
         last_rotation = rot;

@@ -19,6 +19,7 @@ static uint8_t  candidate_rotation = 0;
 static uint32_t candidate_since    = 0;
 static uint32_t last_poll_ms       = 0;
 static bool     imu_ok             = false;
+static bool     orientation_known  = false;   // true once a reading committed
 
 // Dead zone: the dominant axis must beat the other by 25 % before we commit,
 // otherwise (near 45°, e.g. a tilted stand) the current quadrant is kept.
@@ -49,6 +50,8 @@ void imu_hal_init(void) {
     imu_ok = true;
 }
 
+bool imu_hal_orientation_known(void) { return orientation_known; }
+
 void imu_hal_tick(void) {
     if (!imu_ok) return;
     uint32_t now = millis();
@@ -60,6 +63,10 @@ void imu_hal_tick(void) {
 
     uint8_t target = accel_to_rotation(ax, ay);
     if (target == 255 || target == current_rotation) {
+        // A reading that agrees with what we hold confirms it, which is how a
+        // device booted on its side (quadrant 0, the startup value) becomes
+        // known at all.
+        if (target != 255) orientation_known = true;
         candidate_rotation = current_rotation;
         return;
     }
@@ -68,6 +75,7 @@ void imu_hal_tick(void) {
         candidate_since = now;
     } else if (now - candidate_since >= STABLE_TIME_MS) {
         current_rotation = target;
+        orientation_known = true;
         Serial.printf("Rotation: %d (ax=%.2f ay=%.2f)\n", current_rotation, ax, ay);
     }
 }

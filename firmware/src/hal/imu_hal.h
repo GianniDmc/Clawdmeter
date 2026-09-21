@@ -9,3 +9,9 @@
 void    imu_hal_init(void);
 void    imu_hal_tick(void);
 uint8_t imu_hal_rotation_quadrant(void);
+
+// False until a stable reading has committed: the quadrant reads 0 (a side)
+// before that, and anything drawn from it — the Pomodoro's edge marks — would
+// point the wrong way for the first second. Boards without an IMU say true,
+// since nothing orientation-driven runs on them.
+bool    imu_hal_orientation_known(void);
