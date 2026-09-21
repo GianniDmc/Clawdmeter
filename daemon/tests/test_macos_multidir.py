@@ -7,6 +7,8 @@ Run: python -m pytest daemon/tests/test_macos_multidir.py -x -q
 """
 import asyncio
 from pathlib import Path
+import json
+import time
 from unittest.mock import AsyncMock, patch
 
 import daemon.claude_usage_daemon as mod
@@ -58,15 +60,31 @@ def test_token_for_default_dir_falls_back_to_keychain_on_macos(tmp_path, monkeyp
     # An empty dir standing in as the default: no file present -> Keychain.
     monkeypatch.setattr(mod, "DEFAULT_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(mod.sys, "platform", "darwin")
-    with patch.object(mod, "_read_token_keychain", return_value="TOK_KEYCHAIN"):
+    with patch.object(mod, "_read_keychain_blob",
+                      return_value='{"accessToken":"TOK_KEYCHAIN"}'):
         assert read_token_for(tmp_path) == "TOK_KEYCHAIN"
 
 
-def test_token_for_file_wins_over_keychain(tmp_path, monkeypatch):
+def _blob(token, expires_at_ms):
+    return json.dumps({"claudeAiOauth": {"accessToken": token,
+                                         "expiresAt": expires_at_ms}})
+
+
+def test_the_freshest_token_wins(tmp_path, monkeypatch):
+    # Claude Code on macOS refreshes the Keychain copy; a `.credentials.json`
+    # left by an older CLI then sits there expired. Reading the file blindly
+    # left the device on "No data" for hours.
     monkeypatch.setattr(mod, "DEFAULT_CONFIG_DIR", tmp_path)
     monkeypatch.setattr(mod.sys, "platform", "darwin")
-    (tmp_path / ".credentials.json").write_text('{"accessToken":"TOK_FILE"}')
-    with patch.object(mod, "_read_token_keychain", return_value="TOK_KEYCHAIN"):
+    now_ms = time.time() * 1000
+    (tmp_path / ".credentials.json").write_text(_blob("TOK_FILE", now_ms - 3600_000))
+    with patch.object(mod, "_read_keychain_blob",
+                      return_value=_blob("TOK_KEYCHAIN", now_ms + 3600_000)):
+        assert read_token_for(tmp_path) == "TOK_KEYCHAIN"
+
+    (tmp_path / ".credentials.json").write_text(_blob("TOK_FILE", now_ms + 7200_000))
+    with patch.object(mod, "_read_keychain_blob",
+                      return_value=_blob("TOK_KEYCHAIN", now_ms + 3600_000)):
         assert read_token_for(tmp_path) == "TOK_FILE"
 
 

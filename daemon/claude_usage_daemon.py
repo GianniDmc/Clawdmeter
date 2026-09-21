@@ -79,6 +79,24 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def _token_expiry(blob: str) -> float:
+    """expiresAt (seconds) out of a credentials blob, 0 when it says nothing."""
+    try:
+        data = json.loads(blob.strip())
+    except (json.JSONDecodeError, AttributeError):
+        return 0.0
+    stack = [data]
+    while stack:
+        cur = stack.pop()
+        if not isinstance(cur, dict):
+            continue
+        exp = cur.get("expiresAt")
+        if isinstance(exp, (int, float)):
+            return float(exp) / 1000.0
+        stack.extend(v for v in cur.values() if isinstance(v, dict))
+    return 0.0
+
+
 def _extract_access_token(blob: str) -> str | None:
     """Pull the accessToken out of a credentials blob.
 
@@ -131,7 +149,7 @@ def _decode_keychain_blob(raw: str) -> str:
     return raw
 
 
-def _read_token_keychain() -> str | None:
+def _read_keychain_blob() -> str | None:
     """Read the OAuth access token from the macOS Keychain, or None.
 
     ``security … -w`` may hex-dump the stored secret (see _decode_keychain_blob),
@@ -159,7 +177,7 @@ def _read_token_keychain() -> str | None:
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         log(f"Keychain access error: {e}")
         return None
-    return _extract_access_token(_decode_keychain_blob(out.stdout))
+    return _decode_keychain_blob(out.stdout)
 
 
 def read_config_dirs() -> list[Path]:
@@ -196,15 +214,33 @@ def read_token_for(config_dir: Path) -> str | None:
     a work plan whose token lives only in the single Keychain entry can't be told
     apart there (documented follow-up).
     """
+    # Both stores can hold a token: Claude Code on macOS writes the Keychain,
+    # while a `.credentials.json` may linger from an older CLI or a restore.
+    # Whichever expires last wins — reading a stale file forever was worth a
+    # bug report ("les données ne se mettent plus à jour").
+    blobs: list[str] = []
     cred = config_dir / ".credentials.json"
     try:
         if cred.exists():
-            return _extract_access_token(cred.read_text())
+            blobs.append(cred.read_text())
     except OSError as e:
         log(f"Error reading credentials in {config_dir}: {e}")
     if sys.platform == "darwin" and config_dir == DEFAULT_CONFIG_DIR:
-        return _read_token_keychain()
-    return None
+        keychain = _read_keychain_blob()
+        if keychain:
+            blobs.append(keychain)
+    best, best_exp = None, -1.0
+    for blob in blobs:
+        token = _extract_access_token(blob)
+        if not token:
+            continue
+        exp = _token_expiry(blob)
+        if exp > best_exp:
+            best, best_exp = token, exp
+    if best and best_exp and best_exp < time.time():
+        log(f"Newest token in {config_dir} expired "
+            f"{int((time.time() - best_exp) / 60)} min ago")
+    return best
 
 
 def load_cached_address() -> str | None:
