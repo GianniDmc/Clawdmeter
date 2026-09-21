@@ -281,6 +281,17 @@ static const uint16_t* prev_palette = NULL;
 static bool            prev_valid   = false;
 static bool            force_full   = false;  // repaint everything on the next render
 
+// LVGL and this module share the panel: LVGL owns the black background and the
+// widgets, we own the art, and neither knows what the other painted. Whenever
+// LVGL renders anything while the splash is up — the background on unhide, a
+// widget that was just hidden, the Pomodoro edge marks — it has erased part of
+// the art, so the next tick repaints all of it. LVGL only sends this event when
+// it actually drew something, so an idle splash costs nothing.
+static void lvgl_rendered_cb(lv_event_t *e) {
+    (void)e;
+    if (active) force_full = true;
+}
+
 // Upscale grid cells [gx0..gx1]×[gy0..gy1] and push them to the panel, one
 // grid-row band at a time so the scratch buffer stays (GRID*scr_cell × scr_cell).
 static void blit_cells(const uint8_t* cells, const uint16_t* palette,
@@ -738,6 +749,8 @@ void splash_init(lv_obj_t *parent) {
         Serial.println("splash: strip buffer alloc failed");
         return;
     }
+    lv_display_add_event_cb(lv_display_get_default(), lvgl_rendered_cb,
+                            LV_EVENT_RENDER_READY, NULL);
 #else
     // PSRAM path: render into an LVGL canvas at native size (no transform).
     SplashGeometry geo = splash_compute_geometry(c.width, c.height, true);
@@ -802,9 +815,14 @@ void splash_tick(void) {
     if (charge_anim_is_active() || pomodoro_is_active() || settings_is_open()) return;
 
 #if SPLASH_DIRECT_DRAW
-    // Deferred full repaint after a (re)show — runs now that LVGL has drawn the
-    // black background this loop iteration.
+    // Deferred full repaint after a (re)show. LVGL's refresh has its own period,
+    // so the lv_timer_handler() that preceded this tick may not have drawn the
+    // black background yet — drawing the art now would only get erased a few
+    // milliseconds later, and the frame would stay broken until the next
+    // animation change (a new palette is what forces the next full redraw).
+    // Flush whatever LVGL still owes first, then paint on top of it.
     if (force_full) {
+        lv_refr_now(NULL);
         const splash_anim_def_t *fa = &splash_anims[cur_anim];
         if (fa->frame_count) render_frame(compose_stage(fa, cur_frame), fa->palette);
     }

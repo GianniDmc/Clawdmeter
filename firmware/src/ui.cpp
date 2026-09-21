@@ -478,20 +478,29 @@ static void update_pomodoro_edges(void) {
     if (!edge_focus) return;
     const PomodoroConfig& cfg = pomodoro_config();
     // Nothing to point at while the timer, the settings or the splash's own
-    // full-screen art is what the user is looking at.
+    // full-screen art is what the user is looking at. The splash paints
+    // straight to the panel on PSRAM-less boards, so a bar drawn over it would
+    // also cost a full art repaint every time LVGL refreshed it.
     const bool show = cfg.enabled && imu_hal_orientation_known() &&
-                      !pomodoro_is_active() && !settings_is_open();
-    if (!show) {
-        lv_obj_add_flag(edge_focus, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(edge_break, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-    const int q = imu_hal_rotation_quadrant() & 3;
-    const int to_focus = (cfg.focus_quad - q) & 3;
+                      !pomodoro_is_active() && !settings_is_open() &&
+                      current_screen != SCREEN_SPLASH;
     // Already lying on a timer side (the device booted that way, or the
     // Pomodoro is off): a bar along the edge that is under the device says
     // nothing. The marks are there to show which way to turn from upright.
-    if (to_focus == 0 || to_focus == 2) {
+    int to_focus = -1;                   // -1 = no marks
+    if (show) {
+        const int q = imu_hal_rotation_quadrant() & 3;
+        const int d = (cfg.focus_quad - q) & 3;
+        if (d == 1 || d == 3) to_focus = d;
+    }
+
+    // Re-placing an LVGL object invalidates it whether or not anything moved,
+    // and this runs every loop — only touch the marks when they actually change.
+    static int placed = -1;
+    if (to_focus == placed) return;
+    placed = to_focus;
+
+    if (to_focus < 0) {
         lv_obj_add_flag(edge_focus, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(edge_break, LV_OBJ_FLAG_HIDDEN);
         return;
