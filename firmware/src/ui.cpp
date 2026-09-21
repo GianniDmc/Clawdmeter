@@ -455,18 +455,18 @@ static void build_pomodoro_edges(lv_obj_t* parent) {
     edge_break = make_edge(parent, COL_DIM, LV_OPA_40);
 }
 
-// delta = how many quarter turns from here to the focus side: 1 lands on the
-// right edge, 2 on the top, 3 on the left. Flip the table if a board's IMU
-// counts the other way round.
+// The bar marks the edge that has to end up down. delta = quarter turns
+// clockwise from here to that side: turning the device clockwise brings its
+// LEFT edge down, so 1 is the left edge, 2 the top, 3 the right.
 static void place_edge(lv_obj_t* e, int delta) {
     const int len_x = L.scr_w * 2 / 5, len_y = L.scr_h * 2 / 5;
     switch (delta) {
     case 1: lv_obj_set_size(e, EDGE_THICK, len_y);
-            lv_obj_align(e, LV_ALIGN_RIGHT_MID, -2, 0);  break;
+            lv_obj_align(e, LV_ALIGN_LEFT_MID, 2, 0);    break;
     case 2: lv_obj_set_size(e, len_x, EDGE_THICK);
             lv_obj_align(e, LV_ALIGN_TOP_MID, 0, 2);     break;
     case 3: lv_obj_set_size(e, EDGE_THICK, len_y);
-            lv_obj_align(e, LV_ALIGN_LEFT_MID, 2, 0);    break;
+            lv_obj_align(e, LV_ALIGN_RIGHT_MID, -2, 0);  break;
     default: lv_obj_set_size(e, len_x, EDGE_THICK);
             lv_obj_align(e, LV_ALIGN_BOTTOM_MID, 0, -2); break;
     }
