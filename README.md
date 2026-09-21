@@ -218,9 +218,12 @@ The board has three side buttons. What the outer two do depends on the
 
 | Button           | GPIO         | To the Mac: off (default)          | To the Mac: on                        |
 | ---------------- | ------------ | ---------------------------------- | ------------------------------------- |
-| **Left** (BOOT)  | GPIO 0       | Next page                          | Hold to send Space (voice-mode PTT)   |
+| **Left** (BOOT)  | GPIO 0       | Open the settings                  | Hold to send Space (voice-mode PTT)   |
 | **Middle** (PWR) | AXP2101 PKEY | Settings out, restart the Pomodoro, or cycle animations / brightness | Same |
-| **Right** (KEY)  | GPIO 18      | Open the settings                  | Send Shift+Tab (Claude Code mode toggle) |
+| **Right** (KEY)  | GPIO 18      | Next page, or restart the Pomodoro | Send Shift+Tab (Claude Code mode toggle) |
+
+On a board with a single user button, that button pages instead — the
+settings stay reachable with a long press on the screen.
 
 Held 3 seconds and released, the middle button triggers pairing mode. Space
 and Shift+Tab go out as standard BLE HID keyboard reports, so they trigger in

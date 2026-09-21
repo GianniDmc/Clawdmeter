@@ -371,7 +371,7 @@ void settings_init(lv_obj_t* parent) {
     host_btn = make_toggle(y, host_toggle_cb, &host_lbl);
     y += ROW_H + 4;
     make_hint(y, "On: Space and Shift+Tab for Claude Code.\n"
-                 "Off: BOOT switches screens, KEY opens settings.");
+                 "Off: KEY switches screens, BOOT opens settings.");
 
     page = nullptr;
     show_tab(TAB_POMODORO);

@@ -367,8 +367,9 @@ void loop() {
     //   PRIMARY   → HID Space  (Claude Code voice-mode PTT)
     //   SECONDARY → HID Shift+Tab  (mode toggle; only if the board has one)
     //   Otherwise they drive the device:
-    //   PRIMARY   → settings open: close; Pomodoro up: restart; else switch screen
-    //   SECONDARY → open / close the settings
+    //   PRIMARY   → open / close the settings (the only button on one-button
+    //               boards, where it pages instead)
+    //   SECONDARY → settings open: close; Pomodoro up: restart; else next page
     //   PWR       → settings open: close them; Pomodoro up: restart the block;
     //               on splash: cycle animations; on usage: cycle brightness;
     //               hold ~3s + release: pairing mode
@@ -390,10 +391,12 @@ void loop() {
                     primary_sent_key = true;
                 } else if (settings_is_open()) {
                     settings_close();
+                } else if (board_caps().button_count >= 2) {
+                    settings_open();          // paging lives on the right button
                 } else if (pomodoro_is_active()) {
                     pomodoro_restart();
                 } else {
-                    ui_next_screen();
+                    ui_next_screen();         // single-button board: page with it
                 }
             } else {
                 if (primary_wake_swallowed) primary_wake_swallowed = false;
@@ -416,8 +419,10 @@ void loop() {
                         secondary_sent_key = true;
                     } else if (settings_is_open()) {
                         settings_close();
+                    } else if (pomodoro_is_active()) {
+                        pomodoro_restart();
                     } else {
-                        settings_open();
+                        ui_next_screen();
                     }
                 } else {
                     if (secondary_wake_swallowed) secondary_wake_swallowed = false;
