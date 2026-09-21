@@ -71,4 +71,10 @@
 #define BOARD_HAS_IMU              1    // QMI8658 drives auto-rotation
 #define BOARD_HAS_BATTERY          1
 #define BOARD_HAS_IO_EXPANDER      0    // TCA9554 exists on board but only services audio
+// The panel stays in its boot orientation: turning the device is how the
+// Pomodoro is started, and re-orienting the screen for it cost more than it
+// gave (touch remapping, a blank-and-ramp on every nudge). The IMU is still
+// read — the Pomodoro and the edge marks need it.
+#define BOARD_ROTATE_WITH_IMU 0
+
 #define BOARD_HAS_SOUND            1

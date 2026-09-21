@@ -101,11 +101,11 @@ static void apply_rotation(uint8_t q) {
 // new orientation, then ramp brightness back up over ~125 ms (same feel as
 // the S3 port).
 void display_hal_tick(void) {
-    static uint8_t  last_rotation = 0;
+    static uint8_t  last_rotation = applied_quadrant;
     static uint8_t  ramp_step = 0;     // 0=idle, 1..4=ramping
     static uint32_t ramp_last = 0;
 
-    uint8_t rot = imu_hal_rotation_quadrant();
+    uint8_t rot = BOARD_ROTATE_WITH_IMU ? imu_hal_rotation_quadrant() : applied_quadrant;
     if (rot != last_rotation) {
         display_hal_set_brightness(0);
         last_rotation = rot;
