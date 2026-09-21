@@ -21,6 +21,7 @@ struct CodexData {
 struct CopilotData {
     uint32_t tc, mc;     // AI credits today / since the 1st
     int      td, md;     // prompts today / since the 1st
+    int      u;          // Copilot CLI sessions whose credits can't be read
 };
 
 #define COPILOT_MAX_DAYS 31
