@@ -379,17 +379,30 @@ lv_obj_t* pomodoro_get_root(void) { return root; }
 void pomodoro_tick(void) {
     if (!root) return;
 
+    // Wait for a real reading: the quadrant reads 0 — a side — until the IMU
+    // has committed one, and arming against that phantom left the timer dead
+    // on the side it reported.
+    if (!imu_hal_orientation_known()) return;
     const uint8_t q = imu_hal_rotation_quadrant();
 
-    // Only a turn starts a block. The quadrant reads 0 until the IMU has a
-    // stable reading, and keeps its last value while the device lies flat —
-    // 0 is a side, so the device used to boot straight into a break.
+    // A block starts on a deliberate landing, not because the device happened
+    // to power up on its side. So: arm at once, unless the first real reading
+    // came in right after boot AND already sits on a timer side — that one
+    // waits for the next turn. A device booted flat (no reading for a while)
+    // and then laid down counts as deliberate.
+    #define ORIENTATION_SETTLE_MS 5000
     static int16_t boot_quad = -1;
     static bool    armed = false;
     if (!armed) {
-        if (boot_quad < 0) boot_quad = q;
-        if (q == boot_quad) return;
-        armed = true;
+        if (boot_quad < 0) {
+            boot_quad = q;
+            const bool on_a_timer_side = (q == cfg.focus_quad ||
+                                          q == ((cfg.focus_quad + 2) & 3));
+            armed = !(on_a_timer_side && millis() < ORIENTATION_SETTLE_MS);
+        } else if (q != boot_quad) {
+            armed = true;
+        }
+        if (!armed) return;
     }
 
     int want = -1;
