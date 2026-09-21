@@ -60,7 +60,7 @@ def test_copilot_counts_prompts_and_tokens_by_local_day(tmp_path):
         ("s", dt.datetime(2026, 8, 31, 12).timestamp() * 1000, user),   # last month
     ])
     got = read_copilot(tmp_path / "oc.db", tmp_path / "missing.db", now=now)
-    assert got["summary"] == {"tc": 100, "td": 1, "mc": 150, "md": 2}
+    assert got["summary"] == {"tc": 100, "td": 1, "mc": 150, "md": 2, "u": 0}
     assert got["grid"] == {"mo": 9, "wd": dt.date(2026, 9, 1).weekday(), "dim": 30, "d": [50, 0, 100]}
 
 
@@ -103,3 +103,31 @@ def test_reply_credits_use_github_rates_tiers_and_promos():
     assert reply_credits(rates, "m", after, 2000, 0, 0, 0, 9.9) == pytest.approx(1.6)
     # unknown model: OpenCode's dollar cost
     assert reply_credits(rates, "other", after, 1, 1, 1, 1, 0.07) == pytest.approx(7.0)
+
+
+def _copilot_cli_db(path, usage_last, session_days):
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE assistant_usage_events (created_at TEXT, initiator TEXT,"
+                " total_nano_aiu INTEGER)")
+    con.execute("CREATE TABLE sessions (id TEXT, created_at TEXT, updated_at TEXT)")
+    if usage_last:
+        con.execute("INSERT INTO assistant_usage_events VALUES (?, 'user', 0)", (usage_last,))
+    for i, day in enumerate(session_days):
+        con.execute("INSERT INTO sessions VALUES (?, ?, ?)", (str(i), day, day))
+    con.commit()
+    con.close()
+
+
+def test_copilot_reports_cli_sessions_it_cannot_price(tmp_path):
+    # The CLI stopped writing usage events in July 2026 but still records
+    # sessions: those are counted so the device can say what it is missing.
+    from daemon import tool_usage
+    tool_usage._FINISHED_MONTH = None
+    now = dt.datetime(2026, 9, 21, 15, 0).timestamp()
+    _opencode_db(tmp_path / "oc.db", [])
+    _copilot_cli_db(tmp_path / "cp.db", "2026-07-30T09:38:34Z",
+                    ["2026-08-30T10:00:00Z",          # last month: ignored
+                     "2026-09-19T10:00:00Z", "2026-09-20T11:00:00Z"])
+    got = read_copilot(tmp_path / "oc.db", tmp_path / "cp.db", now=now)
+    assert got["summary"]["u"] == 2
+    tool_usage._FINISHED_MONTH = None
