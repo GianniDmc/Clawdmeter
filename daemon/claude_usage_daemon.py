@@ -896,14 +896,14 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     last_cc = cc
 
             cx = read_claude_state(CLAUDE_STATE_DIR / "codex")
-            if cx != last_cx and last_payload is not None:
+            if cx != last_cx:
                 for msg in other_tool_payloads(cx):
                     if msg["k"] == "cx":
                         await session.write_payload(msg)
                 last_cx = cx
 
             oc = read_claude_state(OPENCODE_STATE_DIR)
-            if oc != last_oc and last_payload is not None:
+            if oc != last_oc:
                 if await session.write_payload(opencode_payload(oc)):
                     last_oc = oc
 
@@ -941,6 +941,12 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     last_payload = None
                     if await session.write_payload({"ok": False}):
                         last_poll = time.time()
+                    # An expired Claude token says nothing about the other
+                    # tools: keep their pages alive.
+                    last_cx = read_claude_state(CLAUDE_STATE_DIR / "codex")
+                    last_oc = read_claude_state(OPENCODE_STATE_DIR)
+                    for msg in other_tool_payloads(last_cx, last_oc):
+                        await session.write_payload(msg)
                 else:
                     # Transient poll failure (a live token that didn't answer this
                     # cycle) -> stay silent and retry next tick.
