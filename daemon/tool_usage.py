@@ -238,28 +238,6 @@ def _read_days(opencode_db: Path, copilot_db: Path, start: dt.datetime) -> dict[
     return days
 
 
-def _copilot_unpriced_sessions(db: Path, since: dt.datetime) -> int:
-    """Copilot CLI sessions this month that carry no usage figures.
-
-    The CLI stopped writing assistant_usage_events in July 2026 (its schema
-    moved on) while still recording sessions, so its consumption is invisible
-    here: the device says so rather than quietly reporting a total that is
-    only OpenCode's share.
-    """
-    con = _connect_ro(db)
-    if con is None:
-        return 0
-    try:
-        priced = con.execute("SELECT max(created_at) FROM assistant_usage_events").fetchone()[0]
-        floor = max(since.strftime("%Y-%m-%dT%H:%M:%S"), str(priced or ""))
-        return int(con.execute(
-            "SELECT count(*) FROM sessions WHERE updated_at > ?", (floor,)).fetchone()[0] or 0)
-    except sqlite3.Error:
-        return 0
-    finally:
-        con.close()
-
-
 def read_copilot(opencode_db: Path = OPENCODE_DB, copilot_db: Path = COPILOT_CLI_DB,
                  now: float | None = None) -> dict | None:
     """Credits and prompts today and month-to-date, plus credits per day for the grid."""
@@ -291,8 +269,7 @@ def read_copilot(opencode_db: Path = OPENCODE_DB, copilot_db: Path = COPILOT_CLI
     return {
         "summary": {"tc": round(tc), "td": td,
                     "mc": round(sum(v[1] for v in days.values())),
-                    "md": sum(v[0] for v in days.values()),
-                    "u": _copilot_unpriced_sessions(copilot_db, first)},
+                    "md": sum(v[0] for v in days.values())},
         "grid": {"mo": today.month,
                  "wd": first.weekday(),                        # 0 = Monday
                  "dim": calendar.monthrange(today.year, today.month)[1],

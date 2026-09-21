@@ -315,7 +315,6 @@ static lv_obj_t* cp_month_label = nullptr;
 static lv_obj_t* cp_month_n = nullptr;
 static lv_obj_t* cp_month_tok = nullptr;
 static lv_obj_t* cp_grid_title = nullptr;
-static lv_obj_t* cp_caveat = nullptr;     // "+N CLI sessions not counted"
 static lv_obj_t* cp_grid = nullptr;
 static CopilotGrid cp_grid_data = {};
 static bool      cp_grid_valid = false;
@@ -412,11 +411,6 @@ static void build_copilot(lv_obj_t* parent, lv_event_cb_t click_cb, lv_event_cb_
     lv_obj_t* card = make_box(cp_page, T.margin, T.cal_y, T.w - 2 * T.margin, T.cal_h,
                               GH_CARD, GH_BORDER, 6);
     cp_grid_title = make_label(card, T.cp_label, GH_MUTED, pad, T.cal_h * 10 / 244, "This month");
-    // The CLI records sessions but no longer its credits, so say what is
-    // missing instead of passing OpenCode's share off as the whole bill.
-    cp_caveat = make_label(card, T.cp_wd, GH_MUTED, pad, T.cal_h * 10 / 244, "");
-    lv_obj_align(cp_caveat, LV_ALIGN_TOP_RIGHT, -pad, T.cal_h * 10 / 244 + 2);
-    lv_obj_add_flag(cp_caveat, LV_OBJ_FLAG_HIDDEN);
     const int grid_w = GRID_COLS * T.cell_w + (GRID_COLS - 1) * T.cell_gap;
     const int x0 = (T.w - 2 * T.margin - grid_w) / 2;
     static const char* const WD[GRID_COLS] = { "M", "T", "W", "T", "F", "S", "S" };
@@ -446,12 +440,6 @@ void tool_screens_copilot(const CopilotData& d) {
     lv_label_set_text(cp_month_n, buf);
     lv_label_set_text_fmt(cp_month_tok, T.show_clock ? "credits - %d prompt%s" : "%d prompt%s",
                           d.md, d.md == 1 ? "" : "s");
-    if (d.u > 0) {
-        lv_label_set_text_fmt(cp_caveat, "+ %d CLI session%s not counted", d.u, d.u == 1 ? "" : "s");
-        lv_obj_clear_flag(cp_caveat, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(cp_caveat, LV_OBJ_FLAG_HIDDEN);
-    }
 }
 
 void tool_screens_copilot_grid(const CopilotGrid& g) {

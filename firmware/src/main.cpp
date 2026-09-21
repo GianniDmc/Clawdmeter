@@ -130,7 +130,6 @@ static bool parse_tool_message(const char* json) {
         d.mc = doc["mc"] | 0UL;
         d.td = doc["td"] | 0;
         d.md = doc["md"] | 0;
-        d.u  = doc["u"]  | 0;
         tool_screens_copilot(d);
     } else if (strcmp(k, "cpg") == 0) {
         CopilotGrid g = {};
