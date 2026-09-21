@@ -25,6 +25,14 @@ static bool     orientation_known  = false;   // true once a reading committed
 // otherwise (near 45°, e.g. a tilted stand) the current quadrant is kept.
 #define AXIS_MARGIN       1.25f
 
+// A device standing in a stand leans back, so most of gravity sits on z and
+// both in-plane axes fall under TILT_THRESHOLD: the first orientation was
+// never established and anything waiting on it (the Pomodoro's edge marks)
+// stayed blank until the device was tipped. A gentler threshold, used only
+// to seed that first reading, settles it; a device lying truly flat reads
+// below this too and stays unknown, which is the honest answer.
+#define WEAK_TILT         0.2f
+
 static uint8_t accel_to_rotation(float ax, float ay) {
     float abs_ax = fabsf(ax);
     float abs_ay = fabsf(ay);
@@ -60,6 +68,18 @@ void imu_hal_tick(void) {
 
     float ax, ay, az;
     if (!imu.getAccelerometer(ax, ay, az)) return;
+
+    if (!orientation_known) {
+        float abs_ax = fabsf(ax), abs_ay = fabsf(ay);
+        uint8_t seed = 255;
+        if (abs_ay > WEAK_TILT && abs_ay > abs_ax * AXIS_MARGIN)      seed = (ay > 0) ? 3 : 1;
+        else if (abs_ax > WEAK_TILT && abs_ax > abs_ay * AXIS_MARGIN) seed = (ax > 0) ? 0 : 2;
+        if (seed != 255) {
+            current_rotation = candidate_rotation = seed;
+            orientation_known = true;
+            Serial.printf("Orientation: %d (first reading)\n", seed);
+        }
+    }
 
     uint8_t target = accel_to_rotation(ax, ay);
     if (target == 255 || target == current_rotation) {
