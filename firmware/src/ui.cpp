@@ -455,18 +455,19 @@ static void build_pomodoro_edges(lv_obj_t* parent) {
     edge_break = make_edge(parent, COL_DIM, LV_OPA_40);
 }
 
-// The bar marks the edge that has to end up down. delta = quarter turns
-// clockwise from here to that side: turning the device clockwise brings its
-// LEFT edge down, so 1 is the left edge, 2 the top, 3 the right.
+// The bar marks the edge that has to end up down. delta counts the quadrants
+// from here to that side, and one quadrant up is the right edge going down
+// (measured on the device: landing left-edge-down from upright reaches the
+// side two quadrants from the focus one).
 static void place_edge(lv_obj_t* e, int delta) {
     const int len_x = L.scr_w * 2 / 5, len_y = L.scr_h * 2 / 5;
     switch (delta) {
     case 1: lv_obj_set_size(e, EDGE_THICK, len_y);
-            lv_obj_align(e, LV_ALIGN_LEFT_MID, 2, 0);    break;
+            lv_obj_align(e, LV_ALIGN_RIGHT_MID, -2, 0);  break;
     case 2: lv_obj_set_size(e, len_x, EDGE_THICK);
             lv_obj_align(e, LV_ALIGN_TOP_MID, 0, 2);     break;
     case 3: lv_obj_set_size(e, EDGE_THICK, len_y);
-            lv_obj_align(e, LV_ALIGN_RIGHT_MID, -2, 0);  break;
+            lv_obj_align(e, LV_ALIGN_LEFT_MID, 2, 0);    break;
     default: lv_obj_set_size(e, len_x, EDGE_THICK);
             lv_obj_align(e, LV_ALIGN_BOTTOM_MID, 0, -2); break;
     }
@@ -487,6 +488,14 @@ static void update_pomodoro_edges(void) {
     }
     const int q = imu_hal_rotation_quadrant() & 3;
     const int to_focus = (cfg.focus_quad - q) & 3;
+    // Already lying on a timer side (the device booted that way, or the
+    // Pomodoro is off): a bar along the edge that is under the device says
+    // nothing. The marks are there to show which way to turn from upright.
+    if (to_focus == 0 || to_focus == 2) {
+        lv_obj_add_flag(edge_focus, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(edge_break, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
     place_edge(edge_focus, to_focus);
     place_edge(edge_break, (to_focus + 2) & 3);
 }
