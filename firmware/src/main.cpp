@@ -172,6 +172,7 @@ static bool parse_json(const char* json, UsageData* out) {
     strlcpy(out->cc, doc["cc"] | "", sizeof(out->cc));
     out->clock_epoch = doc["t"] | 0L;
     out->clock_fmt = doc["tf"] | 24;
+    out->auth_expired = strcmp(doc["e"] | "", "auth") == 0;
     out->ok = doc["ok"] | false;
     out->valid = true;
     return true;

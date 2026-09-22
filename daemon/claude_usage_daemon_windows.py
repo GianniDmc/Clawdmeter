@@ -654,8 +654,11 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
                     elif expired:
                         # Token genuinely dead -> show "No data" now instead of stale numbers.
                         # Transient poll failures (payload None without expiry) stay silent.
+                        # "e": "auth" tells the device the credentials exist but need a
+                        # login, so it keeps the Claude page instead of dropping it as
+                        # unconfigured (see poll_active in the macOS daemon).
                         log("No data (token dead); signalling idle to device")
-                        if await session.write_payload({"ok": False}):
+                        if await session.write_payload({"ok": False, "e": "auth"}):
                             last_poll = time.time()
                             consecutive_failures = 0  # D-03: healthy link
                         elif note_write_failure():

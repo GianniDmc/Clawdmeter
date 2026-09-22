@@ -16,6 +16,8 @@ struct UsageData {
                              // "done" | "" (see claude_state.h)
     long clock_epoch;        // local wall-clock epoch (s) from daemon; 0 = not provided
     int  clock_fmt;          // 12 or 24 (hour format from daemon); defaults to 24
+    bool auth_expired;       // daemon holds Claude credentials but they are dead:
+                             // ask for a login instead of reading as "not set up"
     bool ok;                 // data parse succeeded
     bool valid;              // false until first successful parse
 };

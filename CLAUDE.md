@@ -201,6 +201,14 @@ recognizable. Animations named in `claude_state.cpp` ("laptop", "waving",
 "jumping happy") are kept out of `splash.cpp`'s usage-rate rotation, or Clawd
 would look busy while Claude is idle.
 
+`screen_has_data()` in `ui.cpp` keeps pages that never received anything out of
+the button rotation, so a Codex-only device doesn't page through an empty Claude
+screen. The Claude page is the exception twice over: it also carries the idle
+screen, so it only steps aside once another tool is feeding the device, and it
+stays put when the daemon reports expired credentials (`{"ok": false, "e":
+"auth"}` → `needs_login`, status line "Signed out / Login needed"). Dropping the
+page exactly when a `claude login` is due would hide the only notice of it.
+
 ## Icons
 
 `tools/png_to_lvgl.js <input.png> <symbol> [W_MACRO] [H_MACRO] [--tint=RRGGBB | --no-tint]` converts an alpha PNG to RGB565A8. Default tint is white (`0xFFFFFF`) — necessary for Lucide PNGs. Splice output into `firmware/src/icons.h` and use `init_icon_dsc_rgb565a8()` in ui.cpp. Currently only the 5 battery icons use this format; the rest are still raw RGB565 baked over the panel background, fine because they live inside opaque zones.

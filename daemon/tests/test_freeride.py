@@ -66,9 +66,10 @@ def _connected_client():
 
 
 def test_freeride_autherror_emits_no_data_beat():
-    """On a 401 (AuthError) the daemon emits a {"ok": false} no-data beat and exits the
-    poll cleanly — there is no refresh path to fall back on. The device then shows its
-    idle 'No data' screen instead of stale numbers."""
+    """On a 401 (AuthError) the daemon emits a no-data beat and exits the poll cleanly —
+    there is no refresh path to fall back on. The beat carries "e": "auth" because the
+    credentials exist and only need a login: that keeps the Claude page on the device,
+    which is where the user reads what to do, rather than looking unconfigured."""
     import daemon.claude_usage_daemon_windows as mod
     device = MagicMock(); device.address = "AA:BB:CC:DD:EE:FF"
     client = _connected_client()
@@ -95,4 +96,5 @@ def test_freeride_autherror_emits_no_data_beat():
         json.loads(w.decode() if isinstance(w, (bytes, bytearray)) else w)
         for w in writes
     ]
-    assert {"ok": False} in payloads, f"expected a no-data beat, got writes: {payloads}"
+    assert {"ok": False, "e": "auth"} in payloads, \
+        f"expected a login-needed no-data beat, got writes: {payloads}"

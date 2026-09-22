@@ -240,6 +240,7 @@ static lv_obj_t* idle_group;            // the "Zzz" idle screen
 static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
 static bool      data_received = false; // any valid update since boot
 static bool      data_ok = true;        // last payload's ok flag; a {"ok":false} beat = "no fresh data"
+static bool      needs_login = false;   // daemon found dead Claude credentials
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
 static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
@@ -765,6 +766,7 @@ static void limit_warning(float pct, bool* warned, const char* what) {
 void ui_update(const UsageData* data) {
     if (!data->valid) return;
     data_ok = data->ok;
+    needs_login = data->auth_expired;
     if (!data->ok) return;          // a {"ok":false} "no data" beat → fall through to idle, keep last numbers
     last_data_ms = lv_tick_get();   // a real usage update just landed
     data_received = true;
@@ -927,7 +929,10 @@ void ui_tick_anim(void) {
     if (!s_ble_connected) {
         text = "Waiting";              // advertising / waiting for a host connection
     } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
-        text = (anim_msg_idx & 1) ? "No data" : "Listening";
+        // Dead credentials are a data-less state with a fix, so name the fix
+        // rather than leaving the page saying only that nothing is arriving.
+        if (needs_login) text = (anim_msg_idx & 1) ? "Login needed" : "Signed out";
+        else             text = (anim_msg_idx & 1) ? "No data" : "Listening";
     } else if (now - connected_at_ms < 5000) {
         text = "Connected";
     } else {
@@ -1038,6 +1043,9 @@ static bool screen_has_data(screen_t s) {
     if (s == SCREEN_PAIR) return !s_ble_connected;   // only while the link is down
     if (s != SCREEN_USAGE) return tool_screens_has_data(s);
     if (data_received) return true;
+    // Dead credentials are the one case where an empty Claude page has
+    // something to say, so it stays in the rotation to say it.
+    if (needs_login) return true;
     return !(tool_screens_has_data(SCREEN_CODEX) || tool_screens_has_data(SCREEN_COPILOT));
 }
 

@@ -217,3 +217,40 @@ def test_discover_target_non_darwin_returns_none_without_pin(monkeypatch):
     monkeypatch.setattr(mod.sys, "platform", "linux")
     monkeypatch.setattr(mod, "load_cached_address", lambda: None)
     assert _run(mod.discover_target()) is None
+
+
+# ---------------------------------------------------------------------------
+# poll_active — the creds_seen flag
+# ---------------------------------------------------------------------------
+# "No data" and "no Claude here" look identical on the wire, and the device
+# treats them very differently: it drops an unconfigured page from its
+# rotation. creds_seen is what tells the two apart.
+
+def test_poll_active_reports_creds_when_token_is_merely_expired(monkeypatch):
+    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A])
+    monkeypatch.setattr(mod, "read_token_for", lambda d: "DEAD")
+
+    async def expired(token):
+        raise mod.TokenExpired()
+
+    with patch.object(mod, "poll_api", new=AsyncMock(side_effect=expired)):
+        payload, dead, creds = _run(mod.poll_active(PlanSelector()))
+    assert payload is None and dead          # nothing to show
+    assert creds                             # …but Claude IS set up: ask for a login
+
+
+def test_poll_active_reports_no_creds_when_nothing_is_configured(monkeypatch):
+    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A, B])
+    monkeypatch.setattr(mod, "read_token_for", lambda d: None)
+    with patch.object(mod, "poll_api", new=AsyncMock(return_value=None)):
+        payload, dead, creds = _run(mod.poll_active(PlanSelector()))
+    assert payload is None and dead
+    assert not creds                         # Codex-only machine: the page may step aside
+
+
+def test_poll_active_reports_creds_on_a_healthy_poll(monkeypatch):
+    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A])
+    monkeypatch.setattr(mod, "read_token_for", lambda d: "tA")
+    with patch.object(mod, "poll_api", new=AsyncMock(return_value={"s": 7, "ok": True})):
+        payload, dead, creds = _run(mod.poll_active(PlanSelector()))
+    assert payload == {"s": 7, "ok": True} and not dead and creds

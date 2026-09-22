@@ -693,8 +693,9 @@ class PlanSelector:
 _SELECTOR = PlanSelector()
 
 
-async def poll_active(selector: PlanSelector = _SELECTOR) -> tuple[dict | None, bool]:
-    """Poll every configured config dir; return ``(active_payload, all_dead)``.
+async def poll_active(selector: PlanSelector = _SELECTOR) -> tuple[dict | None, bool, bool]:
+    """Poll every configured config dir; return ``(active_payload, all_dead,
+    creds_seen)``.
 
     ``active_payload`` — the active plan's payload dict, or None when no dir
     yields a usable payload this cycle. A single configured dir (the default)
@@ -705,6 +706,11 @@ async def poll_active(selector: PlanSelector = _SELECTOR) -> tuple[dict | None, 
     signal "No data". False when at least one token authenticated — including a
     transient non-auth poll failure worth retrying silently rather than idling.
 
+    ``creds_seen`` — True when at least one dir held a token we could read, even
+    if it turned out to be dead. It separates "Claude isn't set up on this
+    machine", where the device is right to drop the page from its rotation, from
+    "Claude needs a fresh login" — the one moment that page matters most.
+
     Pure free-ride: a 401 (TokenExpired) means that dir's token has expired and
     only Claude Code (its owner) can re-seed it — we never refresh it ourselves.
     """
@@ -712,11 +718,13 @@ async def poll_active(selector: PlanSelector = _SELECTOR) -> tuple[dict | None, 
     payloads: dict[Path, dict] = {}
     sessions: dict[Path, int] = {}
     any_live = False
+    creds_seen = False
     for d in dirs:
         token = read_token_for(d)
         if not token:
             log(f"No token in {d}; skipping")
             continue
+        creds_seen = True
         try:
             payload = await poll_api(token)
         except TokenExpired:
@@ -729,11 +737,11 @@ async def poll_active(selector: PlanSelector = _SELECTOR) -> tuple[dict | None, 
             payloads[d] = payload
             sessions[d] = int(payload.get("s", 0) or 0)
     if not payloads:
-        return None, not any_live
+        return None, not any_live, creds_seen
     active = selector.choose(sessions)
     if len(dirs) > 1:
         log(f"Active plan: {active} (s={sessions[active]})")
-    return payloads[active], False
+    return payloads[active], False, creds_seen
 
 
 async def poll_active_payload(selector: PlanSelector = _SELECTOR) -> dict | None:
@@ -742,7 +750,7 @@ async def poll_active_payload(selector: PlanSelector = _SELECTOR) -> dict | None
     Thin wrapper over :func:`poll_active` for callers that don't need the
     all-dead flag.
     """
-    payload, _dead = await poll_active(selector)
+    payload, _dead, _creds = await poll_active(selector)
     return payload
 
 
@@ -952,7 +960,7 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                 # OAuth endpoint's rate limit (429). When no dir has a usable token
                 # we signal "No data" so the device idles instead of holding stale
                 # numbers until the CLI re-seeds it.
-                payload, dead = await poll_active()
+                payload, dead, creds = await poll_active()
                 if payload is not None:
                     last_payload = dict(payload)
                     cc = read_claude_state()
@@ -975,7 +983,14 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
                     log("No usable token; signalling no-data to device — run "
                         "`claude login` or use the CLI to let Claude Code renew it")
                     last_payload = None
-                    if await session.write_payload({"ok": False}):
+                    # "e": "auth" = credentials are there but dead, so the device
+                    # keeps the Claude page and asks for a login. Without it the
+                    # page reads as "Claude isn't set up here" and the device is
+                    # free to drop it from the rotation.
+                    beat = {"ok": False}
+                    if creds:
+                        beat["e"] = "auth"
+                    if await session.write_payload(beat):
                         last_poll = time.time()
                     # An expired Claude token says nothing about the other
                     # tools: keep their pages alive.

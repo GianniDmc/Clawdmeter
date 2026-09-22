@@ -277,6 +277,12 @@ JSON payload format (written to RX):
 
 Fields: `s` = session %, `sr` = session reset (minutes), `w` = weekly %, `wr` = weekly reset (minutes), `st` = status, `ok` = success flag.
 
+`{"ok": false}` is the "no fresh data" beat, and it carries `"e": "auth"` when
+the daemon found Claude credentials that have expired. That distinction matters
+on screen: a machine with no Claude token at all lets the Claude page step out
+of the rotation, while expired credentials keep it there reading "Login needed"
+— the page is where you find out a `claude login` is due.
+
 `cc` rides along on that payload when Claude Code's hooks are installed:
 `"work"`, `"wait"` or `"done"`. The other tools get their own small messages,
 tagged by a `k` field so the firmware routes them apart from the usage parser:
